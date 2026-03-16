@@ -3,7 +3,7 @@
 
 Vagrant.configure("2") do |config|
   config.vm.box = "fact-cad/FACT-master"  # base image
-  config.vm.network "forwarded_port", guest: 5000, host: 80  # listen port for FACT
+  config.vm.network "forwarded_port", guest: 5000, host: 5000  # listen port for FACT
 
   config.vm.provider "virtualbox" do |vb|
     vb.gui = false  # suppress the virtualbox gui popping up on machine start
