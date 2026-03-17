@@ -43,3 +43,7 @@ start_fact_frontend
 
 # Vagrant
 .vagrant/*
+
+# Virtual environments
+venv/*
+.venv/*

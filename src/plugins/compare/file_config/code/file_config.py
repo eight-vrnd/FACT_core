@@ -36,10 +36,10 @@ class ComparePlugin(CompareBasePlugin):
             ```
         """    
 
+
+        
         result = {}
 
         # your code...
 
         return result
-    
-    compare_function()
