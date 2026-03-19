@@ -4,7 +4,6 @@ from test.common_helper import CommonDatabaseMock
 from plugins.compare.file_config.code.file_config import ComparePlugin
 from test.unit.compare.compare_plugin_test_class import ComparePluginTest
 
-
 class DbMock:
     def get_entropy_for_uid_list(self, uid_list):
         return {uid: 0.2 for uid in uid_list}
@@ -20,6 +19,7 @@ class DbMock:
         return {}
 
 class TestComparePluginFileConfig(ComparePluginTest):
+    # An initialized plugin instance is available at self.c_plugin
     PLUGIN_NAME = 'file_config'
     PLUGIN_CLASS = ComparePlugin
     
@@ -30,16 +30,7 @@ class TestComparePluginFileConfig(ComparePluginTest):
         """
         return ComparePlugin(db_interface=DbMock(), view_updater=CommonDatabaseMock())
     
-    # def test_basic(self):
-    #     '''
-    #     An initialized plugin instance is available at self.c_plugin
-    #     '''
-    #     result = self.c_plugin.compare_function([self.fw_one, self.fw_two, self.fw_three], {})
-        
-    def test_get_exclusive_files(self):
-        result = self.c_plugin._get_exclusive_files([self.fw_one, self.fw_two])
+    def test_compare_function(self):
+        result = self.c_plugin.compare_function([self.fw_one, self.fw_two], {})
         assert isinstance(result, dict), 'result is not a dict'
-        assert self.fw_one.uid in result, 'fw_one entry not found in result'
-        assert self.fw_two.uid in result, 'fw_two entry not found in result'
-        assert self.fw_one.uid in result[self.fw_one.uid], 'fw_one not exclusive to one'
-        assert self.fw_two.uid not in result[self.fw_one.uid], 'fw_two in exclusive file of fw one'
+        assert 'config_parameters' in result, 'config_parameters field not present in result'
