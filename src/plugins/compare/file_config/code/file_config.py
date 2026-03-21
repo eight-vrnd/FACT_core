@@ -1,13 +1,6 @@
 from __future__ import annotations
 
-import config
-import configparser
-import json
-import networkx
-import pprint
 import re
-import ssdeep
-import toml
 
 from itertools import combinations
 from typing import TYPE_CHECKING
@@ -58,32 +51,55 @@ class ComparePlugin(CompareBasePlugin):
             ```
         """
         
-        # gather all candidate file uids from the firmware objects
-        all_candidate_uids = set()
-        for fo in fo_list:
-            if fo.list_of_all_included_files:
-                all_candidate_uids.update(fo.list_of_all_included_files)
-        
-        if not is_list_of_uids(all_candidate_uids):
-            raise ValueError('Expected list of uids, got something else')
-        
-        # Check all_candidate_uids for config files
-        config_files = {}
-        for fo in fo_list:
-            if self._is_config_file(fo):
-                config_files[fo.uid] = self._parse_config(fo)
-                
-        result = {
-            'config_parameters': config_files,
-        }
+        # uid list
+        included_file_uids = self._get_included_file_sets(fo_list)
 
+        included_file_vfps = set()
+        for fo in fo_list:
+            included_file_vfps.update(self._get_vfp_of_included_text_files(fo.root_uid))
+            
+        result = {}
         return result
 
+    @staticmethod
+    def _get_included_file_sets(fo_list: list[FileObject]) -> list[set[str]]:
+        return [set(file_object.list_of_all_included_files) for file_object in fo_list]
+
+    def _get_vfp_of_included_text_files(self, root_uid, blacklist=None):
+        return self.database.get_vfp_of_included_text_files(root_uid)
+    
     def _is_config_file(self, fo: FileObject) -> bool:
-        return True
+        # Filename checks - does the extension match common config file extensions?
+        valid_file_extensions = ['config', 'conf', 'cfg', 'ini', 'toml', 'yaml', 'yml', 'xml']
+        if any(fo.file_name.endswith(ext) for ext in valid_file_extensions):
+            return True
+
+        # prep content 
+        file_content_ascii = fo.binary
+        
+        # Content checks - does the file have lines not starting with ; or # that contain key-value structure?
+        comment_indicator_characters = ['#', ';']
+        valid_key_value_separators = ['=', ':', ' ']
+        valid_key_value_pattern = re.compile(r'^[^#;\s]+?\s*[:=]\s*.+$')
+        
+        for line in file_content_ascii.splitlines():
+            line = line.strip() # Remove leading/trailing whitespace
+            if not line or any(line.startswith(char) for char in comment_indicator_characters):
+                continue
+            if valid_key_value_pattern.match(line):
+                return True
+        
+        # Attempt matching again without first word for triple key value pairs (e.g. "key1 key2 value")
+        valid_key_value_pattern_no_first_word = re.compile(r'^[^\s]+?\s+[^#;\s]+?\s+.+$')
+        for line in file_content_ascii.splitlines():
+            line = line.strip() # Remove leading/trailing whitespace
+            if not line or any(line.startswith(char) for char in comment_indicator_characters):
+                continue
+            if valid_key_value_pattern_no_first_word.match(line):
+                return True
 
     def _parse_config(self, fo: FileObject) -> dict:
-        return {'key': 'value'}
+        return {'key': 'value'} #FIXME
 
     def _compare_parameters(self, fo_list: list[FileObject]) -> dict:
-        raise NotImplementedError()
+        raise NotImplementedError() #FIXME
