@@ -91,8 +91,9 @@ class ComparePlugin(CompareBasePlugin):
         #     }
         # result = self._combine_parsed_configs(parsed_configs_by_vfp)
 
-        result = {}
-        return result
+        # for now, just return vfps with uids that share that vfp, will implement parsing and comparison logic in next iteration
+        results =  shared_vfps
+        return results
 
     def _filter_config_files(self, file_objects: list[FileObject]) -> list[FileObject]:
         """Return a list of file objects that are considered a config file
