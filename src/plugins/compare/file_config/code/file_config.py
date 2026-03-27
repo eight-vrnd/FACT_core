@@ -29,7 +29,7 @@ class ComparePlugin(CompareBasePlugin):
         """__compares configuration files__
 
         Args:
-            fo_list (_type_): 
+            fo_list (_type_):  Firmware objects list
             
         Returns:
             _dict: Returns a dict structured as follows:
@@ -51,21 +51,45 @@ class ComparePlugin(CompareBasePlugin):
             ```
         """
         
-        # uid list
+        # get all uids from all firmware objects' included files
         included_file_uids = self._get_included_file_sets(fo_list)
 
-        # get additional details for each file object using the db functions:
-        #  get_objects_by_uid_list()
-        file_objects = self._get_included_file_objects_from_uid_list(included_file_uids)
-        #  get_vfps_for_uid_list()
-        file_vfpgs = self._get_file_vfp_from_uid_list(included_file_uids)
-        # add vfps to file_objects as attribute
-        for file_object in file_objects:
-            file_object.virtual_file_path[0] = file_vfpgs[file_object.uid] 
+        #  get full file object for all uids
+        included_file_objects = self._get_included_file_objects_from_uid_list(included_file_uids)
         
-        del file_object, file_vfpgs, included_file_uids
+        # only keep config files - filter out non config files based on extension and file type
+        config_files = self._filter_config_files(included_file_objects)
         
-        result = file_objects #FIXME
+        # get uid list for filtered config files
+        config_file_uids = self._get_uid_list_from_file_objects(config_files)
+        
+        #  get virtual file paths for all uids of filtered config files
+        config_file_vfps = self._get_file_vfp_from_uid_list(config_file_uids)
+        
+        # transform to list of vfp + uids that share that vfp
+        shared_vfps = self._get_shared_vfps(config_file_vfps)
+        
+        # for each vfp, parse the all config files and save to [uid, parsed config dict]
+        parsed_configs_by_vfp = self._parse_configs_by_vfp(shared_vfps)
+        
+        # result set should be a list of config files with parse parameters for each config file
+        # combine to achieve the following structure:
+        #   {
+        #         get filename with extension from vfp1:
+        #             {
+        #                 uid1: {'key1': 'value', ...}
+        #                 uid2: {'key1': 'value', ...}
+        #                 'collapse': True
+        #             }
+        #         get filename with extension from vfp2:
+        #             {
+        #                 uid3: {'key1': 'value', ...}
+        #                 uid4: {'key1': 'value', ...}
+        #                 'collapse': True
+        #             }
+        #     }
+        result = self._combine_parsed_configs(parsed_configs_by_vfp)
+    
         return result
 
     @staticmethod
