@@ -54,19 +54,33 @@ class ComparePlugin(CompareBasePlugin):
         # uid list
         included_file_uids = self._get_included_file_sets(fo_list)
 
-        included_file_vfps = set()
-        for fo in fo_list:
-            included_file_vfps.update(self._get_vfp_of_included_text_files(fo.root_uid))
-            
-        result = {}
+        # get additional details for each file object using the db functions:
+        #  get_objects_by_uid_list()
+        file_objects = self._get_included_file_objects_from_uid_list(included_file_uids)
+        #  get_vfps_for_uid_list()
+        file_vfpgs = self._get_file_vfp_from_uid_list(included_file_uids)
+        # add vfps to file_objects as attribute
+        for file_object in file_objects:
+            file_object.virtual_file_path[0] = file_vfpgs[file_object.uid] 
+        
+        del file_object, file_vfpgs, included_file_uids
+        
+        result = file_objects #FIXME
         return result
 
     @staticmethod
     def _get_included_file_sets(fo_list: list[FileObject]) -> list[set[str]]:
         return [set(file_object.list_of_all_included_files) for file_object in fo_list]
-
-    def _get_vfp_of_included_text_files(self, root_uid, blacklist=None):
-        return self.database.get_vfp_of_included_text_files(root_uid)
+    
+    def _get_included_file_objects_from_uid_list(self, uid_list: list[set[str]]) -> list[FileObject]:
+        included_file_uids_flat = set().union(*uid_list)
+        file_objects = self.database.get_objects_by_uid_list(included_file_uids_flat)
+        return file_objects
+    
+    def _get_file_vfp_from_uid_list(self, uid_list: list[set[str]]) -> dict[str, str]:
+        included_file_uids_flat = set().union(*uid_list)
+        file_vfpgs = self.database.get_vfps_for_uid_list(included_file_uids_flat)
+        return file_vfpgs
     
     def _is_config_file(self, fo: FileObject) -> bool:
         # Filename checks - does the extension match common config file extensions?
@@ -74,6 +88,8 @@ class ComparePlugin(CompareBasePlugin):
         if any(fo.file_name.endswith(ext) for ext in valid_file_extensions):
             return True
 
+        # remove/filter out scripting files based on file type?
+        
         # prep content 
         file_content_ascii = fo.binary
         
