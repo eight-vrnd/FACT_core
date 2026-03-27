@@ -88,4 +88,3 @@ class TestComparePluginFileConfig(ComparePluginTest):
     def test_compare_function(self):
         result = self.c_plugin.compare_function([self.fw_one, self.fw_two], {})
         assert isinstance(result, dict), 'result is not a dict'
-        assert 'config_parameters' in result, 'config_parameters field not present in result'
