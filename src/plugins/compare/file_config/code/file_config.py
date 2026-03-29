@@ -41,8 +41,8 @@ class ComparePlugin(CompareBasePlugin):
             {
                 SECTION_ONE:
                     {
-                        FIRST_FILE_OBJECT_ID: Value
-                        SECOND_FILE_OBJECT_ID: Value
+                        FIRST_FIRMWARE_OBJECT_ID: Value
+                        SECOND_FIRMWARE_OBJECT_ID: Value
                         ...
                         'collapse': True/False
                     }
@@ -53,6 +53,11 @@ class ComparePlugin(CompareBasePlugin):
                     }
             }
             ```
+            Note:
+            - key has to be a string to be able to save to db
+            - value has to be json serializable to be able to save to db
+            - 'collapse' key is used to indicate whether the section should be collapsed by default in the frontend (True means collapsed, False means expanded)
+            - 'all' key is used to expand the column to cover all fw objects (instead of having one column per fw object). fw ids <-> 'all' 
         """
         
         # get all uids from all firmware objects' included files
@@ -72,15 +77,6 @@ class ComparePlugin(CompareBasePlugin):
         
         # transform to list of vfp + uids that share that vfp
         shared_vfps = self._get_shared_vfps(config_file_uids_with_vfps)
-
-        # {
-        #     vfp.file_name: {
-        #         fo_list[i].root_uid: ['Column_Key_Title','Key1_Name','Key2_Name',...],['Column_Value_Title','Key1_Value','Key2_Value',...],
-        #         fo_list[i].root_uid: ['Column_Key_Title','Key1_Name','Key2_Name',...],['Column_Value_Title','Key1_Value','Key2_Value',...],
-        #         fo_list[i].root_uid: ['Column_Key_Title','Key1_Name','Key2_Name',...],['Column_Value_Title','Key1_Value','Key2_Value',...],
-        #         'collapse': True
-        #     }
-        # }
         
         # Debug
         results = {

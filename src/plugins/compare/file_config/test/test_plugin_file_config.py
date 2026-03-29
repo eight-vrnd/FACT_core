@@ -2,12 +2,12 @@ import pytest
 import os
 
 from common_helper_files import get_dir_of_file
-from tomlkit import key, value
 from objects.file import FileObject
+from objects.firmware import Firmware
 from plugins.compare.file_config.code.file_config import ComparePlugin
 from test.common_helper import CommonDatabaseMock, create_test_file_object, create_test_firmware
 from test.unit.compare.compare_plugin_test_class import ComparePluginTest
-from helperFunctions.uid import create_uid
+from helperFunctions.uid import create_uid, is_list_of_uids, is_uid
 
 class DbMock:
     def get_objects_by_uid_list(
@@ -72,23 +72,42 @@ class TestComparePluginFileConfig(ComparePluginTest):
         """
         
         self.fw_one = create_test_firmware(device_name='dev_1_firmware_1', bin_path='firmware1/firmware1.zip', all_files_included_set=True)
-        self.fw_one.add_included_file(create_test_file_object(uid='uid_1', bin_path='firmware1/config/example.config'))
-        self.fw_one.list_of_all_included_files = ['uid_1']
-        self.fw_one.root_uid = create_uid(self.fw_one.file_path)
+        self.fw_one.add_included_file(create_test_file_object(bin_path='firmware1/config/example.config'))
         
         self.fw_two = create_test_firmware(device_name='dev_1_firmware_2', bin_path='firmware2/firmware2.zip', all_files_included_set=True)
-        self.fw_two.add_included_file(create_test_file_object(uid='uid_2', bin_path='firmware2/config/example.config'))
-        self.fw_two.list_of_all_included_files = ['uid_2']
-        self.fw_two.root_uid = create_uid(self.fw_two.file_path)
+        self.fw_one.add_included_file(create_test_file_object(bin_path='firmware2/config/example.config'))
         
         self.fw_three = create_test_firmware(device_name='dev_1_firmware_2', bin_path='firmware2/firmware2.zip', all_files_included_set=True)
-        self.fw_three.add_included_file(create_test_file_object(uid='uid_3', bin_path='firmware2/config/example.config'))
-        self.fw_three.list_of_all_included_files = ['uid_3']
-        self.fw_three.root_uid = create_uid(self.fw_three.file_path)
+        self.fw_one.add_included_file(create_test_file_object(bin_path='firmware2/config/example.config'))
         
     def test_compare_function(self):
         result = self.c_plugin.compare_function([self.fw_one, self.fw_two], {})
         assert isinstance(result, dict), 'result is not a dict'
+    
+    def test_preconditions_fileobjects(self):
+        # Check firmware objects
+        assert isinstance(self.fw_one, FileObject), 'fw_one is not a FileObject'
+        assert isinstance(self.fw_two, FileObject), 'fw_two is not a FileObject'
+        assert isinstance(self.fw_three, FileObject), 'fw_three is not a FileObject'
+        assert isinstance(self.fw_one, Firmware), 'fw_one is not a Firmware'
+        assert isinstance(self.fw_two, Firmware), 'fw_two is not a Firmware'
+        assert isinstance(self.fw_three, Firmware), 'fw_three is not a Firmware'
+        
+        # Check contents
+        assert len(self.fw_one.list_of_all_included_files) == 1, 'fw_one should have 1 included file'
+        assert len(self.fw_two.list_of_all_included_files) == 1, 'fw_two should have 1 included file'
+        assert len(self.fw_three.list_of_all_included_files) == 1, 'fw_three should have 1 included file'
+        
+        # Check UIDs
+        assert is_uid(self.fw_one.root_uid), 'fw_one root uid is not a valid uid'
+        assert is_uid(self.fw_one.uid), 'fw_one root uid is not a valid uid'
+        assert is_uid(self.fw_two.root_uid), 'fw_two root uid is not a valid uid'
+        assert is_uid(self.fw_two.uid), 'fw_two uid is not a valid uid'
+        assert is_uid(self.fw_three.root_uid), 'fw_three root uid is not a valid uid'
+        assert is_uid(self.fw_three.uid), 'fw_three uid is not a valid uid'
+        assert is_list_of_uids(self.fw_one.list_of_all_included_files), 'List of included files should be a list of uids'
+        assert is_list_of_uids(self.fw_two.list_of_all_included_files), 'List of included files should be a list of uids'
+        assert is_list_of_uids(self.fw_three.list_of_all_included_files), 'List of included files should be a list of uids'
     
     def test_parse_config_from_binary_empty_file(self):
         # Empty file should return empty dict
