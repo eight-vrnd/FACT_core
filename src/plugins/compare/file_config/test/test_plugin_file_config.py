@@ -2,6 +2,7 @@ import pytest
 import os
 
 from common_helper_files import get_dir_of_file
+from tomlkit import key, value
 from objects.file import FileObject
 from plugins.compare.file_config.code.file_config import ComparePlugin
 from test.common_helper import CommonDatabaseMock, create_test_file_object, create_test_firmware
@@ -16,12 +17,15 @@ class DbMock:
         for uid in uid_list:
             if uid == 'uid_1':
                 file_object = create_test_file_object(uid='uid_1', bin_path='firmware1/config/example.config')
+                file_object.create_binary_from_path()
                 file_objects.append(file_object)
             elif uid == 'uid_2':
                 file_object = create_test_file_object(uid='uid_2', bin_path='firmware2/config/example.config')
+                file_object.create_binary_from_path()
                 file_objects.append(file_object)
             elif uid == 'uid_3':
                 file_object = create_test_file_object(uid='uid_3', bin_path='firmware2/config/example.config')
+                file_object.create_binary_from_path()
                 file_objects.append(file_object)
         
         return file_objects
@@ -34,9 +38,6 @@ class DbMock:
         value=vfp_dict for that file (vfp_dict is the same as the output of `get_vfps()` for that file). If `root_uid`
         is set, only return the paths inside the firmware with UID `root_uid`.
         """
-        # return virtual file paths for each uid/root_uid combo
-        # dev_1_firmware_1 root uid: '34d7e9d95a3896f445e438037e5d03c98b4b5097b14c8c5521eb83105c569709_61'
-        # dev_1_firmware_2 root uid: '6bcbfafd4affeb5d5657653566c06420e5961d9712f5b5774094ce0c5f2763c7_61'
         vfps = {}
         for uid in uid_list:
             if uid == 'uid_1':
@@ -88,3 +89,120 @@ class TestComparePluginFileConfig(ComparePluginTest):
     def test_compare_function(self):
         result = self.c_plugin.compare_function([self.fw_one, self.fw_two], {})
         assert isinstance(result, dict), 'result is not a dict'
+    
+    def test_parse_config_from_binary_empty_file(self):
+        # Empty file should return empty dict
+        example_content = b""
+        expected_output = {}
+        output = self.c_plugin._parse_config_from_binary(example_content)
+        assert output == expected_output, f'Unexpected output for empty file'
+        
+    def test_parse_config_from_binary(self):
+        # Example config content
+        example_content_dual_key = b"""
+        type key value
+        
+        ; network config
+        network port 8080
+        network bind 0.0.0.0
+        network protocol tcp
+        
+        ; database config
+        database host localhost
+        database port 3306
+        """
+        expected_output = {
+            'type key': 'value',
+            'network port': '8080',
+            'network bind': '0.0.0.0',
+            'network protocol': 'tcp',
+            'database host': 'localhost',
+            'database port': '3306'
+        }
+        output = self.c_plugin._parse_config_from_binary(example_content_dual_key, filetype='dualkey')
+        assert output == expected_output, f'Unexpected output'
+    
+    def test_parse_helper_dualkey(self):
+        # Example dualkey config content
+        example_content = b"""
+        type key value
+        
+        ; network config
+        network port 8080
+        network bind 0.0.0.0
+        network protocol tcp
+        
+        ; database config
+        database host localhost
+        database port 3306
+        """
+        expected_output = {
+            'type key': 'value',
+            'network port': '8080',
+            'network bind': '0.0.0.0',
+            'network protocol': 'tcp',
+            'database host': 'localhost',
+            'database port': '3306'
+        }
+        output = self.c_plugin._parse_helper_dualkey(example_content)
+        assert output == expected_output, f'Unexpected output'
+        
+    def test_parse_helper_default(self):
+        # Example default config content
+        example_content = b"""
+        # This is a comment
+        port=8080
+        bind=0.0.0.0
+        protocol=tcp
+        """
+        expected_output = {
+            'port': '8080',
+            'bind': '0.0.0.0',
+            'protocol': 'tcp'
+        }
+        
+        output = self.c_plugin._parse_helper_default(example_content)
+        assert output == expected_output, f'Unexpected output'
+
+    def test_parse_helper_toml(self):
+        # Example toml config content
+        example_content = b"""
+        [network]
+        port = 8080
+        bind = "0.0.0.0"
+        
+        [database]
+        host = "localhost"
+        port = 3306
+        """
+        expected_output = {
+            'network port': '8080',
+            'network bind': '0.0.0.0',
+            'database host': 'localhost',
+            'database port': '3306'
+        }
+        output = self.c_plugin._parse_helper_toml(example_content)
+        assert output == expected_output, f'Unexpected output'
+        
+    def test_parse_helper_xml(self):
+        # Example xml config content
+        example_content = b"""
+        <config>
+            <network>
+                <port>8080</port>
+                <bind>0.0.0.0</bind>
+            </network>
+            <database>
+                <host>localhost</host>
+                <port>3306</port>
+            </database>
+        </config>
+        """
+        expected_output = {
+            'config network port': '8080',
+            'config network bind': '0.0.0.0',
+            'config database host': 'localhost',
+            'config database port': '3306'
+        }
+        output = self.c_plugin._parse_helper_xml(example_content)
+        assert output == expected_output, f'Unexpected output'

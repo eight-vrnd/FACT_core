@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-import re
 import os
+import json
+import re
+
+import toml
 
 from itertools import combinations
 from typing import TYPE_CHECKING
@@ -23,10 +26,10 @@ class ComparePlugin(CompareBasePlugin):
     '''
 
     NAME = 'file_config'
-    DEPENDENCIES = []
-    VERSION = '0.0.1'
+    DEPENDENCIES = ['file_analysis']
+    VERSION = '0.0.1'    
 
-    def compare_function(self, fo_list, dependency_results: dict[str, dict]):
+    def compare_function(self, fo_list, dependency_results: dict[str, dict]) -> dict[str, dict]:
         """__compares configuration files__
 
         Args:
@@ -69,30 +72,32 @@ class ComparePlugin(CompareBasePlugin):
         
         # transform to list of vfp + uids that share that vfp
         shared_vfps = self._get_shared_vfps(config_file_uids_with_vfps)
-        
-        # # for each vfp, parse the all config files and save to [uid, parsed config dict]
-        # parsed_configs_by_vfp = self._parse_configs_by_vfp(shared_vfps)
-        
-        # result set should be a list of config files with parse parameters for each config file
-        # combine to achieve the following structure:
-        #   {
-        #         get filename with extension from vfp1:
-        #             {
-        #                 uid1: {'key1': 'value', ...}
-        #                 uid2: {'key1': 'value', ...}
-        #                 'collapse': True
-        #             }
-        #         get filename with extension from vfp2:
-        #             {
-        #                 uid3: {'key1': 'value', ...}
-        #                 uid4: {'key1': 'value', ...}
-        #                 'collapse': True
-        #             }
-        #     }
-        # result = self._combine_parsed_configs(parsed_configs_by_vfp)
 
-        # for now, just return vfps with uids that share that vfp, will implement parsing and comparison logic in next iteration
-        results =  shared_vfps
+        # {
+        #     vfp.file_name: {
+        #         fo_list[i].root_uid: ['Column_Key_Title','Key1_Name','Key2_Name',...],['Column_Value_Title','Key1_Value','Key2_Value',...],
+        #         fo_list[i].root_uid: ['Column_Key_Title','Key1_Name','Key2_Name',...],['Column_Value_Title','Key1_Value','Key2_Value',...],
+        #         fo_list[i].root_uid: ['Column_Key_Title','Key1_Name','Key2_Name',...],['Column_Value_Title','Key1_Value','Key2_Value',...],
+        #         'collapse': True
+        #     }
+        # }
+        
+        # Debug
+        results = {
+            'config_file_uids': {
+                'all': [json.dumps(config_file_uids, ensure_ascii=True)],
+                'collapse': False
+            },
+            'config_file_uids_with_vfps': {
+                'all': [json.dumps(config_file_uids_with_vfps, ensure_ascii=True)],
+                'collapse': False
+            },
+            'shared_vfps': {
+                'all': [json.dumps(shared_vfps, ensure_ascii=True)],
+                'collapse': False
+            },
+        }
+        
         return results
 
     def _filter_config_files(self, file_objects: list[FileObject]) -> list[FileObject]:
@@ -132,41 +137,20 @@ class ComparePlugin(CompareBasePlugin):
         """        
         
         # config_file_uids_with_vfps = {
-        #   'uid_1': {'firmware1/example.config': [...]},
-        #   'uid_2': {'firmware2/example.config': [...]}
+        #   'uid_1': {'firmware1/config/example.config': ['example.config']},
+        #   'uid_2': {'firmware2/config/example.config': ['example.config']}
         # }
-        vfp_to_uids: dict[str, list[str]] = {}
-        for uid, vfp_dict in config_file_uids_with_vfps.items():
-            for vfp, paths in (vfp_dict or {}).items():
-                filename = os.path.basename(vfp)
-                vfp_to_uids.setdefault(filename, []).append(uid)
+        vfp_to_uids = {}
+        for uid, vfps in config_file_uids_with_vfps.items():
+            for vfp in vfps.keys():
+                if vfp not in vfp_to_uids:
+                    vfp_to_uids[vfp] = []
+                vfp_to_uids[vfp].append(uid)
         
         # only keep vfps that are shared across multiple config files
         shared_vfps = {vfp: uids for vfp, uids in vfp_to_uids.items() if len(uids) > 1}
-        return shared_vfps
-
-    def _parse_configs_by_vfp(self, shared_vfps: dict[str, list[str]]) -> dict[str, list[tuple[str, dict]]]:
-        raise NotImplementedError() #FIXME
-        # parsed_configs_by_vfp = {}
-        # for vfp, uids in shared_vfps.items():
-        #     parsed_configs_by_vfp[vfp] = []
-        #     for uid in uids:
-        #         file_object = self.database.get_objects_by_uid_list([uid])[0]
-        #         parsed_config = self._parse_config(file_object)
-        #         parsed_configs_by_vfp[vfp].append((uid, parsed_config))
-        # return parsed_configs_by_vfp
+        return shared_vfps  
     
-    def _combine_parsed_configs(self, parsed_configs_by_vfp: dict[str, list[tuple[str, dict]]]) -> dict:
-        raise NotImplementedError() #FIXME
-        # combined_result = {}
-        # for vfp, parsed_configs in parsed_configs_by_vfp.items():
-        #     filename = vfp.split('/')[-1] # get filename with extension from vfp
-        #     combined_result[filename] = {}
-        #     for uid, parsed_config in parsed_configs:
-        #         combined_result[filename][uid] = parsed_config
-        #     combined_result[filename]['collapse'] = True # default to collapsing all config files with same vfp, can be set to False in UI if desired
-        # return combined_result
-
     @staticmethod
     def _get_included_file_sets(fo_list: list[FileObject]) -> list[set[str]]:
         """Returns a set for each firmware object containing the uids of all included file objects of that firmware object
@@ -192,27 +176,68 @@ class ComparePlugin(CompareBasePlugin):
         file_objects = self.database.get_objects_by_uid_list(included_file_uids_flat)
         return file_objects
     
-    def _get_file_vfp_from_uid_list(self, uid_list: list[str]) -> dict[str, str]:
-        # included_file_uids_flat = set().union(*uid_list)
-        file_vfpgs = self.database.get_vfps_for_uid_list(uid_list)
-        return file_vfpgs
+    def _get_file_vfp_from_uid_list(self, uid_list: list[str]) -> dict[str, dict[str, list[str]]]:
+        uid_vfp = self.database.get_vfps_for_uid_list(uid_list)
+        return uid_vfp
+    
+    def _get_config_file_type(self, fo: FileObject) -> str | None:
+        """Return a string representing the type of config file based on the file extension and/or content
+
+        Args:
+            fo (FileObject): File object to check for config file type
+
+        Returns:
+            str | None: String representing the type of config file or None if it cannot be determined
+        """
+        # Use results of file analysis plugin if available
+        
+        # Snippet from file object Class:
+            # : Analysis results for this file.
+            # :
+            # : Structure of results:
+            # : The first level of this dict is a pair of ``'plugin_name': <result_dict>`` pairs.
+            # : The result dict can have any content, but always has at least the fields:
+            # :
+            # : * analysis_date - float representing the time of analysis in unix time.
+            # : * plugin_version - str defining the version of each plugin at time of analysis.
+            # : * summary - list holding a summary of each file's result, that can be aggregated.
+            # self.processed_analysis = {}
+        
+        # This is an example result of file_analysis:
+            # {
+            #     "full": "ASCII text",
+            #     "mime": "text/plain"
+            # }
+        fo.processed_analysis.get('file_analysis', {}).get('mime', '')
     
     def _is_config_file(self, fo: FileObject) -> bool:
-        # Filename checks - does the extension match common config file extensions?
+        # File extension
         valid_file_extensions = ['config', 'conf', 'cfg', 'ini', 'toml', 'yaml', 'yml', 'xml']
         if any(fo.file_name.endswith(ext) for ext in valid_file_extensions):
             return True
-
-        # remove/filter out scripting files based on file type?
         
-        # prep content 
-        file_content_ascii = fo.binary
+        # Ensure binary 
+        if fo.binary is None and fo.file_path is not None:
+            fo.create_binary_from_path() # if only a path is given, create binary using the built-in method
+        elif fo.file_path is None:
+            return False # no file contents to analyze
         
-        # Content checks - does the file have lines not starting with ; or # that contain key-value structure?
+        # Get file content as ascii string
+        file_content_binary = fo.binary
+        try:
+            file_content_ascii = file_content_binary.decode('ascii', errors='ignore')
+        except:
+            return False 
+        
+        # Empty file handling
+        if file_content_ascii.strip() == '':
+            return False 
+        
+        # Comment indicator characters for ignored lines
         comment_indicator_characters = ['#', ';']
-        valid_key_value_separators = ['=', ':', ' ']
-        valid_key_value_pattern = re.compile(r'^[^#;\s]+?\s*[:=]\s*.+$')
         
+        # Parse key/value
+        valid_key_value_pattern = re.compile(r'^[^#;\s]+?\s*[:=]\s*.+$')
         for line in file_content_ascii.splitlines():
             line = line.strip() # Remove leading/trailing whitespace
             if not line or any(line.startswith(char) for char in comment_indicator_characters):
@@ -220,7 +245,7 @@ class ComparePlugin(CompareBasePlugin):
             if valid_key_value_pattern.match(line):
                 return True
         
-        # Attempt matching again without first word for triple key value pairs (e.g. "key1 key2 value")
+        # Parse dual key/value (e.g. "key1 key2 value")
         valid_key_value_pattern_no_first_word = re.compile(r'^[^\s]+?\s+[^#;\s]+?\s+.+$')
         for line in file_content_ascii.splitlines():
             line = line.strip() # Remove leading/trailing whitespace
@@ -228,9 +253,138 @@ class ComparePlugin(CompareBasePlugin):
                 continue
             if valid_key_value_pattern_no_first_word.match(line):
                 return True
+        
+        # Fallback
+        return False
 
-    def _parse_config(self, fo: FileObject) -> dict:
-        return {'key': 'value'} #FIXME
+    def _parse_config_from_binary(self, binary_data: bytes, filetype: str | None = None) -> dict:
+        """Return a dict of key value strings for a given binary string
 
-    def _compare_parameters(self, fo_list: list[FileObject]) -> dict:
-        raise NotImplementedError() #FIXME
+        Args:
+            binary_data (bytes): Binary data
+            filetype (str | None): Optional file type to use for parsing strategy. Options: 'toml', 'xml', 'dualkey'
+
+        Returns:
+            dict: Dict of key value strings
+        """
+        # Empty file handling
+        if binary_data.strip() == b'':
+            return {}
+        
+        # Use best parsing strategy based on type
+        if filetype == 'toml':
+            return self._parse_helper_toml(binary_data)
+        elif filetype == 'xml':
+            return self._parse_helper_xml(binary_data)
+        elif filetype == 'dualkey':
+            return self._parse_helper_dualkey(binary_data)
+        else:
+            return self._parse_helper_default(binary_data)
+    
+    def _parse_helper_xml(self, binary_data: bytes) -> dict:
+        """Parse an xml config file from binary data and return a dict of key value strings
+
+        Args:
+            binary_data (bytes): Binary data of the xml file
+
+        Returns:
+            dict: Dict of key value strings
+        """
+        # when the key is nested, include all parent keys in the key name (e.g. "parentkey childkey1 childkey2" for <parentkey><childkey1><childkey2>value</childkey2></childkey1></parentkey>)
+        # also prevent order from being flipped by using a list of values for each key and keeping the order of the keys as they appear in the file
+        try:
+            file_content_ascii = binary_data.decode('ascii', errors='ignore')
+            root = ET.fromstring(file_content_ascii)
+            config_dict = {}
+            def recursive_parse(element, parent_keys=[]):
+                current_keys = parent_keys + [element.tag]
+                if element.text and element.text.strip():
+                    config_dict[' '.join(current_keys)] = element.text.strip()
+                for child in element:
+                    recursive_parse(child, current_keys)
+            recursive_parse(root)
+            return config_dict
+        except Exception as e:
+            print(f"Error parsing xml file: {e}")
+            return {}
+    
+    def _parse_helper_toml(self, binary_data: bytes) -> dict:
+        """Parse a toml config file from binary data and return a dict of key value strings
+
+        Args:
+            binary_data (bytes): Binary data of the toml file
+
+        Returns:
+            dict: Dict of key value strings
+        """
+        try:
+            file_content_ascii = binary_data.decode('ascii', errors='ignore')
+            parsed_toml = toml.loads(file_content_ascii)
+            # flatten nested dicts by concatenating keys with a space (e.g. {'network': {'port': 8080}} becomes {'network port': 8080})
+            def flatten_dict(d, parent_key=''):
+                items = {}
+                for k, v in d.items():
+                    new_key = f"{parent_key} {k}".strip() if parent_key else k
+                    if isinstance(v, dict):
+                        items.update(flatten_dict(v, new_key))
+                    else:
+                        items[new_key] = v
+                return items
+            flattened_toml = flatten_dict(parsed_toml)
+            # convert all values to strings for consistency with other parsing methods
+            flattened_toml_str_values = {k: str(v) for k, v in flattened_toml.items()}
+            return flattened_toml_str_values
+        except Exception as e:
+            print(f"Error parsing toml file: {e}")
+            return {}
+        
+    def _parse_helper_default(self, binary_data: bytes) -> dict:
+        """Parse a config file from binary data using the default parsing strategy and return a dict of key value strings
+
+        Args:
+            binary_data (bytes): Binary data of the config file
+
+        Returns:
+            dict: Dict of key value strings
+        """
+        # Comment indicator characters for ignored lines
+        comment_indicator_characters = ['#', ';']
+        
+        config_dict = {}
+        valid_key_value_pattern = re.compile(r'^[^#;\s]+?\s*[:=]\s*.+$')
+        for line in binary_data.decode('ascii', errors='ignore').splitlines():
+            line = line.strip() # Remove leading/trailing whitespace
+            if not line or any(line.startswith(char) for char in comment_indicator_characters):
+                continue
+            match = valid_key_value_pattern.match(line)
+            if match:
+                key, value = re.split(r'\s*[:=]\s*', line, maxsplit=1)
+                config_dict[key] = value
+        
+        return config_dict
+    
+    def _parse_helper_dualkey(self, binary_data: bytes) -> dict:
+        """Parse a config file from binary data using the default parsing strategy for dual key/value pairs and return a dict of key value strings
+
+        Args:
+            binary_data (bytes): Binary data of the config file
+
+        Returns:
+            dict: Dict of key value strings
+        """
+        # Comment indicator characters for ignored lines
+        comment_indicator_characters = ['#', ';']
+        
+        config_dict = {}
+        valid_key_value_pattern_no_first_word = re.compile(r'^[^\s]+?\s+[^#;\s]+?\s+.+$')
+        for line in binary_data.decode('ascii', errors='ignore').splitlines():
+            line = line.strip() # Remove leading/trailing whitespace
+            if not line or any(line.startswith(char) for char in comment_indicator_characters):
+                continue
+            match = valid_key_value_pattern_no_first_word.match(line)
+            if match:
+                parts = line.split()
+                key1, key2, value = parts[0], parts[1], ' '.join(parts[2:])
+                config_dict[f"{key1} {key2}"] = value
+        
+        return config_dict
