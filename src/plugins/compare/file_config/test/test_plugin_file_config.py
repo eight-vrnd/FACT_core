@@ -9,24 +9,31 @@ from test.common_helper import CommonDatabaseMock, create_test_file_object, crea
 from test.unit.compare.compare_plugin_test_class import ComparePluginTest
 from helperFunctions.uid import create_uid, is_list_of_uids, is_uid
 
+# Setting up test firmware objects to allow DbMock class to access file objects
+FW_ONE = create_test_firmware(device_name='dev_1_firmware_1', bin_path='firmware1/firmware1.zip', all_files_included_set=True)
+FW_ONE.add_included_file(create_test_file_object(bin_path='firmware1/config/example.config'))
+
+FW_TWO = create_test_firmware(device_name='dev_1_firmware_2', bin_path='firmware2/firmware2.zip', all_files_included_set=True)
+FW_TWO.add_included_file(create_test_file_object(bin_path='firmware2/config/example.config'))
+
+FW_THREE = create_test_firmware(device_name='dev_1_firmware_2', bin_path='firmware2/firmware2.zip', all_files_included_set=True)
+FW_THREE.add_included_file(create_test_file_object(bin_path='firmware2/config/example.config'))
+
 class DbMock:
+        
     def get_objects_by_uid_list(
         self, uid_list: list[str] | set[str], analysis_filter: list[str] | None = None
     ) -> list[FileObject]:
         file_objects = []
+        
         for uid in uid_list:
-            if uid == 'uid_1':
-                file_object = create_test_file_object(uid='uid_1', bin_path='firmware1/config/example.config')
-                file_object.create_binary_from_path()
-                file_objects.append(file_object)
-            elif uid == 'uid_2':
-                file_object = create_test_file_object(uid='uid_2', bin_path='firmware2/config/example.config')
-                file_object.create_binary_from_path()
-                file_objects.append(file_object)
-            elif uid == 'uid_3':
-                file_object = create_test_file_object(uid='uid_3', bin_path='firmware2/config/example.config')
-                file_object.create_binary_from_path()
-                file_objects.append(file_object)
+            # Check which test firmware the uid belongs to and return the corresponding file object
+            if uid in FW_ONE.list_of_all_included_files:
+                file_objects.append(create_test_file_object(bin_path='firmware1/config/example.config', uid=uid))
+            elif uid in FW_TWO.list_of_all_included_files:
+                file_objects.append(create_test_file_object(bin_path='firmware2/config/example.config', uid=uid))
+            elif uid in FW_THREE.list_of_all_included_files:
+                file_objects.append(create_test_file_object(bin_path='firmware2/config/example.config', uid=uid))
         
         return file_objects
 
@@ -38,20 +45,27 @@ class DbMock:
         value=vfp_dict for that file (vfp_dict is the same as the output of `get_vfps()` for that file). If `root_uid`
         is set, only return the paths inside the firmware with UID `root_uid`.
         """
+        
+        # vfps[uid] = {
+        #     'firmware1/config/example.config': ['example.config']
+        # }
+        
         vfps = {}
+        
         for uid in uid_list:
-            if uid == 'uid_1':
+            if uid in FW_ONE.list_of_all_included_files:
                 vfps[uid] = {
                     'firmware1/config/example.config': ['example.config']
                 }
-            elif uid == 'uid_2':
+            elif uid in FW_TWO.list_of_all_included_files:
                 vfps[uid] = {
                     'firmware2/config/example.config': ['example.config']
                 }
-            elif uid == 'uid_3':
+            elif uid in FW_THREE.list_of_all_included_files:
                 vfps[uid] = {
                     'firmware2/config/example.config': ['example.config']
                 }
+        
         return vfps
         
     
@@ -65,26 +79,9 @@ class TestComparePluginFileConfig(ComparePluginTest):
         
         # Plugin initialization
         return ComparePlugin(db_interface=DbMock(), view_updater=CommonDatabaseMock())
-
-    def setup_test_fw(self):
-        """
-        Mockup firmware files with included config files similar to each other for testing of identification, parsing, and comparison
-        """
-        
-        self.fw_one = create_test_firmware(device_name='dev_1_firmware_1', bin_path='firmware1/firmware1.zip', all_files_included_set=True)
-        self.fw_one.add_included_file(create_test_file_object(bin_path='firmware1/config/example.config'))
-        
-        self.fw_two = create_test_firmware(device_name='dev_1_firmware_2', bin_path='firmware2/firmware2.zip', all_files_included_set=True)
-        self.fw_one.add_included_file(create_test_file_object(bin_path='firmware2/config/example.config'))
-        
-        self.fw_three = create_test_firmware(device_name='dev_1_firmware_2', bin_path='firmware2/firmware2.zip', all_files_included_set=True)
-        self.fw_one.add_included_file(create_test_file_object(bin_path='firmware2/config/example.config'))
-        
-    def test_compare_function(self):
-        result = self.c_plugin.compare_function([self.fw_one, self.fw_two], {})
-        assert isinstance(result, dict), 'result is not a dict'
     
-    def test_preconditions_fileobjects(self):
+    
+    def test_setup_selfcheck(self):
         # Check firmware objects
         assert isinstance(self.fw_one, FileObject), 'fw_one is not a FileObject'
         assert isinstance(self.fw_two, FileObject), 'fw_two is not a FileObject'
@@ -108,6 +105,18 @@ class TestComparePluginFileConfig(ComparePluginTest):
         assert is_list_of_uids(self.fw_one.list_of_all_included_files), 'List of included files should be a list of uids'
         assert is_list_of_uids(self.fw_two.list_of_all_included_files), 'List of included files should be a list of uids'
         assert is_list_of_uids(self.fw_three.list_of_all_included_files), 'List of included files should be a list of uids'
+
+    def setup_test_fw(self):
+        """
+        Mockup firmware files with included config files similar to each other for testing of identification, parsing, and comparison
+        """
+        self.fw_one = FW_ONE
+        self.fw_two = FW_TWO
+        self.fw_three = FW_THREE
+        
+    def test_compare_function(self):
+        result = self.c_plugin.compare_function([self.fw_one, self.fw_two], {})
+        assert isinstance(result, dict), 'result is not a dict'
     
     def test_parse_config_from_binary_empty_file(self):
         # Empty file should return empty dict
