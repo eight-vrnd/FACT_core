@@ -27,7 +27,8 @@ class ComparePlugin(CompareBasePlugin):
 
     NAME = 'file_config'
     DEPENDENCIES = ['file_analysis']
-    VERSION = '0.0.1'    
+    # DEPENDENCIES = []
+    VERSION = '0.0.1'
 
     def compare_function(self, fo_list, dependency_results: dict[str, dict]) -> dict[str, dict]:
         """__compares configuration files__
@@ -204,13 +205,18 @@ class ComparePlugin(CompareBasePlugin):
             #     "full": "ASCII text",
             #     "mime": "text/plain"
             # }
-        fo.processed_analysis.get('file_analysis', {}).get('mime', '')
+        # fo.processed_analysis.get('file_analysis', {}).get('mime', '') # untested
     
     def _is_config_file(self, fo: FileObject) -> bool:
         # File extension
         valid_file_extensions = ['config', 'conf', 'cfg', 'ini', 'toml', 'yaml', 'yml', 'xml']
         if any(fo.file_name.endswith(ext) for ext in valid_file_extensions):
             return True
+        
+        # Check MIME type and filter out application/* file types
+        fo.processed_analysis.get('file_analysis', {}).get('mime', '')
+        if fo.processed_analysis.get('file_analysis', {}).get('mime', '').startswith('application/'):
+            return False
         
         # Ensure binary 
         if fo.binary is None and fo.file_path is not None:
@@ -231,6 +237,22 @@ class ComparePlugin(CompareBasePlugin):
         
         # Comment indicator characters for ignored lines
         comment_indicator_characters = ['#', ';']
+        
+        # Prevent script files (e.g. python or C programming snippets) from being identified as a false positive
+        # get first 10 lines excluding comment lines
+        first_lines = []
+        for line in file_content_ascii.splitlines():
+            line = line.strip() # Remove leading/trailing whitespace
+            if not line or any(line.startswith(char) for char in comment_indicator_characters):
+                continue
+            first_lines.append(line)
+            if len(first_lines) >= 10:
+                break
+            
+        # Check for common script file syntax that may indicate a script
+        common_script_syntax = ['def ', 'function ', '#include ', 'import ', '{', '}', 'public ', 'private ', 'class ', 'console.log', 'printf(', 'System.out.println', 'echo ']
+        if any(syntax in line for line in first_lines for syntax in common_script_syntax):
+            return False
         
         # Parse key/value
         valid_key_value_pattern = re.compile(r'^[^#;\s]+?\s*[:=]\s*.+$')

@@ -76,10 +76,7 @@ class TestComparePluginFileConfig(ComparePluginTest):
     TEST_DATA_DIR = os.path.join(get_dir_of_file(__file__), 'data')
     
     def setup_plugin(self):
-        
-        # Plugin initialization
         return ComparePlugin(db_interface=DbMock(), view_updater=CommonDatabaseMock())
-    
     
     def test_setup_selfcheck(self):
         # Check firmware objects
