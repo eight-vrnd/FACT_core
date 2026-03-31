@@ -48,6 +48,8 @@ class ComparePlugin(CompareBasePlugin):
         # transform to list of vfp + uids that share that vfp
         shared_vfps = self._get_shared_vfps(config_file_uids_with_vfps)
 
+        parsed_config_parameters = self._parse_config_from_fo_list(config_files)
+
         # Debug
         results = {
             'config_file_uids': {
@@ -57,9 +59,66 @@ class ComparePlugin(CompareBasePlugin):
             'config_file_uids_with_vfps': {
                 fo.uid: config_file_uids_with_vfps for fo in fo_list
             },
+            'shared_vfps': {
+                vfp: uids for vfp, uids in shared_vfps.items()
+            }
         }
-
+        
         return results
+    
+    def _parse_config_from_fo_list(self, fo_list: list[FileObject]) -> dict[str, dict[str, str]]:
+        """Parse config parameters from a list of file objects and return a dict of file object uid to dict of key value strings
+
+        Args:
+            fo_list (list[FileObject]): List of file objects to parse
+
+        Returns:
+            dict[str, dict[str, str]]: Dict of file object uid to dict of key value strings
+                e.g. {
+                    'uid_1': {'key1': 'value1', 'key2': 'value2'},
+                    'uid_2': {'key1': 'value3', 'key2': 'value4'}
+                }
+        """
+        for fo in fo_list:
+            # Check which config type the file is
+            config_file_type = self._determine_config_type(fo)
+            # Parse config parameters from file binary using the appropriate parsing strategy for the config type
+            fo.parsed_config_parameters = self._parse_config_from_binary(fo.binary, filetype=config_file_type)
+
+    def _determine_config_type(self, fo: FileObject) -> str | None:
+        """Determine the config file type based on file extension and file type analysis results
+
+        Args:
+            fo (FileObject): File object to determine config type for
+
+        Returns:
+            str | None: Config file type. Options: 'toml', 'xml', 'dualkey', or None if type cannot be determined
+        """
+        # Check file extension first
+        if fo.file_name.endswith('.toml'):
+            return 'toml'
+        elif fo.file_name.endswith('.xml'):
+            return 'xml'
+        elif fo.file_name.endswith('.csv'):
+            return 'csv'
+        
+        # Check file type analysis results for indicators of config file type (e.g. "application/toml" mime type or "xml" in file type strings)
+        if 'file_type' in fo.processed_analysis:
+            if 'mime' in fo.processed_analysis['file_type']:
+                mime = fo.processed_analysis['file_type']['mime']
+                if mime == 'application/toml':
+                    return 'toml'
+                elif mime == 'application/xml':
+                    return 'xml'
+            if 'type_strings' in fo.processed_analysis['file_type']:
+                type_strings = fo.processed_analysis['file_type']['type_strings']
+                if any('toml' in s for s in type_strings):
+                    return 'toml'
+                elif any('xml' in s for s in type_strings):
+                    return 'xml'
+
+        # Fallback to default parsing strategy
+        return None
 
     def _filter_config_files(self, file_objects: list[FileObject]) -> list[FileObject]:
         """Return a list of file objects that are considered a config file
