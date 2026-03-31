@@ -19,83 +19,106 @@ from objects.file import FileObject
 
 if TYPE_CHECKING:
     from objects.file import FileObject
-    
+
 class ComparePlugin(CompareBasePlugin):
     '''
     This plugin allows comparison of two (or more) configuration files. It handles identifying, parsing, and displaying config file key/value pairs for a variety of configuration file types
     '''
 
     NAME = 'file_config'
-    DEPENDENCIES = ['file_analysis']
-    # DEPENDENCIES = []
-    VERSION = '0.0.1'
+    DEPENDENCIES = ['file_type']
+    VERSION = '0.0.3'
 
     def compare_function(self, fo_list, dependency_results: dict[str, dict]) -> dict[str, dict]:
-        """__compares configuration files__
-
-        Args:
-            fo_list (_type_):  Firmware objects list
-            
-        Returns:
-            _dict: Returns a dict structured as follows:
-            ```
-            {
-                SECTION_ONE:
-                    {
-                        FIRST_FIRMWARE_OBJECT_ID: Value
-                        SECOND_FIRMWARE_OBJECT_ID: Value
-                        ...
-                        'collapse': True/False
-                    }
-                SECTION_TWO:
-                    {
-                        'all': Value
-                        'collapse': True/False
-                    }
-            }
-            ```
-            Note:
-            - key has to be a string to be able to save to db
-            - value has to be json serializable to be able to save to db
-            - 'collapse' key is used to indicate whether the section should be collapsed by default in the frontend (True means collapsed, False means expanded)
-            - 'all' key is used to expand the column to cover all fw objects (instead of having one column per fw object). fw ids <-> 'all' 
-        """
-        
         # get all uids from all firmware objects' included files
         included_file_uids = self._get_included_file_sets(fo_list)
 
         #  get full file object for all uids
         file_objects = self._get_included_file_objects_from_uid_list(included_file_uids)
-        
+
         # only keep config files - filter out non config files based on extension and file type
         config_files = self._filter_config_files(file_objects)
-        
+
         # get uid list for filtered config files
         config_file_uids = self._get_uid_list_from_file_objects(config_files)
-        
+
         #  get virtual file paths for all uids of filtered config files
         config_file_uids_with_vfps = self._get_file_vfp_from_uid_list(config_file_uids)
-        
+
         # transform to list of vfp + uids that share that vfp
         shared_vfps = self._get_shared_vfps(config_file_uids_with_vfps)
-        
+
+        parsed_config_parameters = self._parse_config_from_fo_list(config_files)
+
         # Debug
         results = {
             'config_file_uids': {
-                'all': [json.dumps(config_file_uids, ensure_ascii=True)],
-                'collapse': False
+                'all': config_file_uids,
+                'collapse': True
             },
             'config_file_uids_with_vfps': {
-                'all': [json.dumps(config_file_uids_with_vfps, ensure_ascii=True)],
-                'collapse': False
+                fo.uid: config_file_uids_with_vfps for fo in fo_list
             },
             'shared_vfps': {
-                'all': [json.dumps(shared_vfps, ensure_ascii=True)],
-                'collapse': False
-            },
+                vfp: uids for vfp, uids in shared_vfps.items()
+            }
         }
         
         return results
+    
+    def _parse_config_from_fo_list(self, fo_list: list[FileObject]) -> dict[str, dict[str, str]]:
+        """Parse config parameters from a list of file objects and return a dict of file object uid to dict of key value strings
+
+        Args:
+            fo_list (list[FileObject]): List of file objects to parse
+
+        Returns:
+            dict[str, dict[str, str]]: Dict of file object uid to dict of key value strings
+                e.g. {
+                    'uid_1': {'key1': 'value1', 'key2': 'value2'},
+                    'uid_2': {'key1': 'value3', 'key2': 'value4'}
+                }
+        """
+        for fo in fo_list:
+            # Check which config type the file is
+            config_file_type = self._determine_config_type(fo)
+            # Parse config parameters from file binary using the appropriate parsing strategy for the config type
+            fo.parsed_config_parameters = self._parse_config_from_binary(fo.binary, filetype=config_file_type)
+
+    def _determine_config_type(self, fo: FileObject) -> str | None:
+        """Determine the config file type based on file extension and file type analysis results
+
+        Args:
+            fo (FileObject): File object to determine config type for
+
+        Returns:
+            str | None: Config file type. Options: 'toml', 'xml', 'dualkey', or None if type cannot be determined
+        """
+        # Check file extension first
+        if fo.file_name.endswith('.toml'):
+            return 'toml'
+        elif fo.file_name.endswith('.xml'):
+            return 'xml'
+        elif fo.file_name.endswith('.csv'):
+            return 'csv'
+        
+        # Check file type analysis results for indicators of config file type (e.g. "application/toml" mime type or "xml" in file type strings)
+        if 'file_type' in fo.processed_analysis:
+            if 'mime' in fo.processed_analysis['file_type']:
+                mime = fo.processed_analysis['file_type']['mime']
+                if mime == 'application/toml':
+                    return 'toml'
+                elif mime == 'application/xml':
+                    return 'xml'
+            if 'type_strings' in fo.processed_analysis['file_type']:
+                type_strings = fo.processed_analysis['file_type']['type_strings']
+                if any('toml' in s for s in type_strings):
+                    return 'toml'
+                elif any('xml' in s for s in type_strings):
+                    return 'xml'
+
+        # Fallback to default parsing strategy
+        return None
 
     def _filter_config_files(self, file_objects: list[FileObject]) -> list[FileObject]:
         """Return a list of file objects that are considered a config file
@@ -105,13 +128,13 @@ class ComparePlugin(CompareBasePlugin):
 
         Returns:
             list[FileObject]: File objects that are considered config files
-        """        
+        """
         config_files = []
         for fo in file_objects:
             if self._is_config_file(fo):
                 config_files.append(fo)
         return config_files
-    
+
     def _get_uid_list_from_file_objects(self, file_objects: list[FileObject]) -> list[str]:
         """Return a list of uid strings from a list of file
 
@@ -120,9 +143,9 @@ class ComparePlugin(CompareBasePlugin):
 
         Returns:
             list[str]: List of uids of file objects
-        """        
+        """
         return [fo.uid for fo in file_objects]
-    
+
     def _get_shared_vfps(self, config_file_uids_with_vfps: dict[str, dict[str, list[str]]]) -> dict[str, list[str]]:
         """Return a dict of vfps that are shared across config files with the list of uids that share that vfp
 
@@ -131,8 +154,8 @@ class ComparePlugin(CompareBasePlugin):
 
         Returns:
             dict[str, list[str]]: Dict of vfps that are shared across config files with the list of uids that share that vfp
-        """        
-        
+        """
+
         # config_file_uids_with_vfps = {
         #   'uid_1': {'firmware1/config/example.config': ['example.config']},
         #   'uid_2': {'firmware2/config/example.config': ['example.config']}
@@ -143,11 +166,11 @@ class ComparePlugin(CompareBasePlugin):
                 if vfp not in vfp_to_uids:
                     vfp_to_uids[vfp] = []
                 vfp_to_uids[vfp].append(uid)
-        
+
         # only keep vfps that are shared across multiple config files
         shared_vfps = {vfp: uids for vfp, uids in vfp_to_uids.items() if len(uids) > 1}
-        return shared_vfps  
-    
+        return shared_vfps
+
     @staticmethod
     def _get_included_file_sets(fo_list: list[FileObject]) -> list[set[str]]:
         """Returns a set for each firmware object containing the uids of all included file objects of that firmware object
@@ -157,9 +180,9 @@ class ComparePlugin(CompareBasePlugin):
 
         Returns:
             list[set[str]]: List of sets of file object uids, one set per firmware object
-        """        
+        """
         return [set(file_object.list_of_all_included_files) for file_object in fo_list]
-    
+
     def _get_included_file_objects_from_uid_list(self, uid_list: list[set[str]]) -> list[FileObject]:
         """Generate a list of file objects for all uids of all firmware objects
 
@@ -168,11 +191,11 @@ class ComparePlugin(CompareBasePlugin):
 
         Returns:
             list[FileObject]: List of file objects each with their respective attributes
-        """        
+        """
         included_file_uids_flat = set().union(*uid_list)
         file_objects = self.database.get_objects_by_uid_list(included_file_uids_flat)
         return file_objects
-    
+
     def _get_file_vfp_from_uid_list(self, uid_list: list[str]) -> dict[str, dict[str, list[str]]]:
         uid_vfp = self.database.get_vfps_for_uid_list(uid_list)
         return uid_vfp
@@ -208,6 +231,9 @@ class ComparePlugin(CompareBasePlugin):
         # fo.processed_analysis.get('file_analysis', {}).get('mime', '') # untested
     
     def _is_config_file(self, fo: FileObject) -> bool:
+        if fo.processed_analysis.get('file_type', {}).get('mime', '').startswith('text/'):
+            return False
+
         # File extension
         valid_file_extensions = ['config', 'conf', 'cfg', 'ini', 'toml', 'yaml', 'yml', 'xml']
         if any(fo.file_name.endswith(ext) for ext in valid_file_extensions):
@@ -223,18 +249,18 @@ class ComparePlugin(CompareBasePlugin):
             fo.create_binary_from_path() # if only a path is given, create binary using the built-in method
         elif fo.file_path is None:
             return False # no file contents to analyze
-        
+
         # Get file content as ascii string
         file_content_binary = fo.binary
         try:
             file_content_ascii = file_content_binary.decode('ascii', errors='ignore')
         except:
-            return False 
-        
+            return False
+
         # Empty file handling
         if file_content_ascii.strip() == '':
-            return False 
-        
+            return False
+
         # Comment indicator characters for ignored lines
         comment_indicator_characters = ['#', ';']
         
@@ -262,7 +288,7 @@ class ComparePlugin(CompareBasePlugin):
                 continue
             if valid_key_value_pattern.match(line):
                 return True
-        
+
         # Parse dual key/value (e.g. "key1 key2 value")
         valid_key_value_pattern_no_first_word = re.compile(r'^[^\s]+?\s+[^#;\s]+?\s+.+$')
         for line in file_content_ascii.splitlines():
@@ -271,7 +297,7 @@ class ComparePlugin(CompareBasePlugin):
                 continue
             if valid_key_value_pattern_no_first_word.match(line):
                 return True
-        
+
         # Fallback
         return False
 
@@ -288,7 +314,7 @@ class ComparePlugin(CompareBasePlugin):
         # Empty file handling
         if binary_data.strip() == b'':
             return {}
-        
+
         # Use best parsing strategy based on type
         if filetype == 'toml':
             return self._parse_helper_toml(binary_data)
@@ -298,7 +324,7 @@ class ComparePlugin(CompareBasePlugin):
             return self._parse_helper_dualkey(binary_data)
         else:
             return self._parse_helper_default(binary_data)
-    
+
     def _parse_helper_xml(self, binary_data: bytes) -> dict:
         """Parse an xml config file from binary data and return a dict of key value strings
 
@@ -325,7 +351,7 @@ class ComparePlugin(CompareBasePlugin):
         except Exception as e:
             print(f"Error parsing xml file: {e}")
             return {}
-    
+
     def _parse_helper_toml(self, binary_data: bytes) -> dict:
         """Parse a toml config file from binary data and return a dict of key value strings
 
@@ -355,7 +381,7 @@ class ComparePlugin(CompareBasePlugin):
         except Exception as e:
             print(f"Error parsing toml file: {e}")
             return {}
-        
+
     def _parse_helper_default(self, binary_data: bytes) -> dict:
         """Parse a config file from binary data using the default parsing strategy and return a dict of key value strings
 
@@ -367,7 +393,7 @@ class ComparePlugin(CompareBasePlugin):
         """
         # Comment indicator characters for ignored lines
         comment_indicator_characters = ['#', ';']
-        
+
         config_dict = {}
         valid_key_value_pattern = re.compile(r'^[^#;\s]+?\s*[:=]\s*.+$')
         for line in binary_data.decode('ascii', errors='ignore').splitlines():
@@ -378,9 +404,9 @@ class ComparePlugin(CompareBasePlugin):
             if match:
                 key, value = re.split(r'\s*[:=]\s*', line, maxsplit=1)
                 config_dict[key] = value
-        
+
         return config_dict
-    
+
     def _parse_helper_dualkey(self, binary_data: bytes) -> dict:
         """Parse a config file from binary data using the default parsing strategy for dual key/value pairs and return a dict of key value strings
 
@@ -392,7 +418,7 @@ class ComparePlugin(CompareBasePlugin):
         """
         # Comment indicator characters for ignored lines
         comment_indicator_characters = ['#', ';']
-        
+
         config_dict = {}
         valid_key_value_pattern_no_first_word = re.compile(r'^[^\s]+?\s+[^#;\s]+?\s+.+$')
         for line in binary_data.decode('ascii', errors='ignore').splitlines():
@@ -404,5 +430,5 @@ class ComparePlugin(CompareBasePlugin):
                 parts = line.split()
                 key1, key2, value = parts[0], parts[1], ' '.join(parts[2:])
                 config_dict[f"{key1} {key2}"] = value
-        
+
         return config_dict
