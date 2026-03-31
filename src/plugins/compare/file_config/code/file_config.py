@@ -52,12 +52,12 @@ class ComparePlugin(CompareBasePlugin):
         # for each vfp, get the parsed config parameters for each uid and place them in the rootuid of the firmware object the file belongs to for table view
         # e.g.
         # results = {
-        #     <first config file uid>: {
+        #     <first config file name>: {
         #         <first firmware object rootuid>: <parsed config parameters from first config file vfp in first fw object>,
         #         <second firmware object rootuid>: <parsed config parameters from first config file vfp in second fw object>,
         #         ...
         #     },
-        #     <second config file uid>: {
+        #     <second config file name>: {
         #         <first firmware object rootuid>: <parsed config parameters from second config file vfp in first fw object>,
         #         <second firmware object rootuid>: <parsed config parameters from second config file vfp in second fw object>,
         #         ...
@@ -65,34 +65,56 @@ class ComparePlugin(CompareBasePlugin):
         #      ...
         # }
         
-        # results = {}
-        # for vfp, uids in shared_vfps.items():
-        #     for uid in uids:
-        #         # rootuid is stored in file object 
-        #         firmware_rootuid = 
-        #         if firmware_rootuid not in results:
-        #             results[firmware_rootuid] = {}
-        #         results[firmware_rootuid][vfp] = parsed_config_parameters.get(uid, {})
-
+        results = {}
+        for vfp, uids in shared_vfps.items():
+            config_file_name_to_show_in_view = vfp.split('/')[-1] # get the file name from the vfp to show in the view
+            results[config_file_name_to_show_in_view] = {}
+            for uid in uids:
+                fo = self._get_objects_from_uids([uid])[0]
+                firmware_rootuid = self._get_rootuid_for_file_object(fo)
+                results[config_file_name_to_show_in_view][firmware_rootuid] = parsed_config_parameters.get(uid, {})
+                
+        # fill in any missing firmware objects that do not have the config file with empty dicts for the config parameters so that they show up in the table view with empty values instead of being left out entirely
+        all_firmware_rootuids = set(self._get_rootuid_for_file_object(fo) for fo in fo_list)
+        for config_file_name, firmware_dict in results.items():
+            for rootuid in all_firmware_rootuids:
+                if rootuid not in firmware_dict:
+                    results[config_file_name][rootuid] = {}
 
         # # Debug
-        # results = {
-        #     'config_file_uids': {file_
-        #         'all': config_file_uids,
-        #         'collapse': True
-        #     },
-        #     'config_file_uids_with_vfps': {
-        #         fo.uid: config_file_uids_with_vfps for fo in fo_list
-        #     },
-        #     'shared_vfps': {
-        #         vfp: uids for vfp, uids in shared_vfps.items()
-        #     },
-        #     'parsed_config_parameters': {
-        #         uid: params for uid, params in parsed_config_parameters.items()
-        #     }
-        # }
-        results = {}
+        results = {
+            'config_file_uids': {
+                'all': config_file_uids,
+                'collapse': True
+            },
+            # 'config_file_uids_with_vfps': {
+            #     fo.uid: config_file_uids_with_vfps for fo in fo_list
+            # },
+            # 'shared_vfps': {
+            #     vfp: uids for vfp, uids in shared_vfps.items()
+            # },
+            # 'parsed_config_parameters': {
+            #     uid: params for uid, params in parsed_config_parameters.items()
+            # }
+            'results': {
+                'all': str(results), # results as string
+                'collapse': False
+            }
+        }
         return results
+    
+    def _get_rootuid_for_file_object(self, fo: FileObject) -> str | None:
+        """Get the rootuid of the firmware object that a file object belongs to
+
+        Args:
+            fo (FileObject): File object to get rootuid for
+
+        Returns:
+            str | None: Rootuid of the firmware object that the file object belongs to, or None if it cannot be determined
+        """
+        # Check if root_uid attribute is set on file object
+        if hasattr(fo, 'root_uid') and fo.root_uid:
+            return fo.root_uid
     
     def _parse_config_from_fo_list(self, fo_list: list[FileObject]) -> dict[str, dict[str, str]]:
         """Parse config parameters from a list of file objects and return a dict of file object uid to dict of key value strings
@@ -244,12 +266,19 @@ class ComparePlugin(CompareBasePlugin):
         """Returns a list of uids of all included files of all firmware objects
 
         Args:
-            fo_list (list[FileObject]): Firmware object list
+            fo_list (list[FileObject]): Firmware object list.
 
         Returns:
             list[str]: List of uids of all included files of all firmware objects
         """
-        return [uid for file_object in fo_list for uid in file_object.list_of_all_included_files]
+        if not fo_list:
+            return []
+        all_uids = set()
+        #FIXME Firmware objects contain list_of_all_included_files which is a list of uids of all included files in the firmware object. If it's not set, use recursive method to get files from files_included instead.
+        for fo in fo_list:
+            if hasattr(fo, 'list_of_all_included_files'):
+                all_uids.update(fo.list_of_all_included_files)
+        return list(all_uids)
 
     def _get_objects_from_uids(self, uid_list: list[str]) -> list[FileObject]:
         """Get list of file objects from a list of sets of uids
