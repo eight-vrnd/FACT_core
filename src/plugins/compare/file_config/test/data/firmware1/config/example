@@ -1,0 +1,10 @@
+; Example generic configuration for firmware test data
+name = "firmware1-example"
+version = "1.0.0"
+enabled = true
+host = "192.168.1.100"
+port = 8080
+timeout_seconds = 30
+input_dir = "/opt/firmware/input"
+output_dir = "/opt/firmware/output"
+log_file = "/var/log/firmware1-example.log" ; this is an inline comment!
