@@ -9,6 +9,12 @@ from test.common_helper import CommonDatabaseMock, create_test_file_object, crea
 from test.unit.compare.compare_plugin_test_class import ComparePluginTest
 from helperFunctions.uid import create_uid, is_list_of_uids, is_uid
 
+# IDE specific settings
+# pyright: reportOperatorIssue=false
+# pyright: reportArgumentType=false
+# pyright: reportAttributeAccessIssue=false
+# pyright: reportOptionalMemberAccess=false
+
 # Setting up test firmware objects to allow DbMock class to access file objects
 # Manually add binaries to included file objects due to paths being different from live system
 TEST_DATA_DIR = os.path.join(get_dir_of_file(__file__), 'data')
@@ -19,10 +25,13 @@ FO_ONE.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.
 FW_ONE.add_included_file(FO_ONE)
 
 FW_TWO = create_test_firmware(device_name='dev_1_firmware_2', bin_path='firmware2/firmware2.zip', all_files_included_set=True)
-FW_TWO.add_included_file(create_test_file_object(bin_path='firmware2/config/example.config'))
+FO_TWO = create_test_file_object(bin_path='firmware2/config/example.config')
+FO_TWO.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware2/config/example.config')
+FW_TWO.add_included_file(FO_TWO)
 
-FW_THREE = create_test_firmware(device_name='dev_1_firmware_2', bin_path='firmware2/firmware2.zip', all_files_included_set=True)
-FW_THREE.add_included_file(create_test_file_object(bin_path='firmware2/config/example.config'))
+FW_THREE = create_test_firmware(device_name='dev_1_firmware_3', bin_path='firmware3/firmware3.zip', all_files_included_set=True)
+FO_THREE = FO_TWO
+FW_THREE.add_included_file(FO_THREE)
 
 class DbMock:
         
@@ -36,9 +45,9 @@ class DbMock:
             if uid in FW_ONE.list_of_all_included_files:
                 file_objects.append(FO_ONE)
             elif uid in FW_TWO.list_of_all_included_files:
-                file_objects.append(create_test_file_object(bin_path='firmware2/config/example.config', uid=uid))
+                file_objects.append(FO_TWO)
             elif uid in FW_THREE.list_of_all_included_files:
-                file_objects.append(create_test_file_object(bin_path='firmware2/config/example.config', uid=uid))
+                file_objects.append(FO_THREE)
         
         return file_objects
 
@@ -120,10 +129,45 @@ class TestComparePluginFileConfig(ComparePluginTest):
         assert is_list_of_uids(self.fw_one.list_of_all_included_files), 'List of included files should be a list of uids'
         assert is_list_of_uids(self.fw_two.list_of_all_included_files), 'List of included files should be a list of uids'
         assert is_list_of_uids(self.fw_three.list_of_all_included_files), 'List of included files should be a list of uids'
+    
+    def test_compare_function_components(self):
+        # fo_list is the list of firmware objects to be compares
+        fo_list = [self.fw_one, self.fw_two, self.fw_three]
         
+        # get all uids from all firmware objects' included files --> list[set[str]]
+        included_file_uids = self.c_plugin._get_included_file_sets(fo_list)
+        assert isinstance(included_file_uids, list), 'Included file uids should be a list'
+        assert all(isinstance(uid_set, set) for uid_set in included_file_uids), 'Each item in included file uids should be a set of uids'
+
+        #  get full file object for all uids
+        file_objects = self.c_plugin._get_included_file_objects_from_uid_list(included_file_uids)
+        assert all(isinstance(fo, FileObject) for fo in file_objects), 'All returned objects should be FileObjects'
+
+        # only keep config files - filter out non config files based on extension and file type
+        config_files = self.c_plugin._filter_config_files(file_objects)
+        assert all(isinstance(fo, FileObject) for fo in config_files), 'All returned objects should be FileObjects'
+
+        # get uid list for filtered config files
+        config_file_uids = self.c_plugin._get_uid_list_from_file_objects(config_files)
+        assert is_list_of_uids(config_file_uids), 'Config file uids should be a list of uids'
+
+        #  get virtual file paths for all uids of filtered config files
+        config_file_uids_with_vfps = self.c_plugin._get_file_vfp_from_uid_list(config_file_uids)
+        assert isinstance(config_file_uids_with_vfps, dict), 'Config file uids with vfps should be a dict'
+
+        # transform to list of vfp + uids that share that vfp
+        shared_vfps = self.c_plugin._get_shared_vfps(config_file_uids_with_vfps)
+        assert isinstance(shared_vfps, dict), 'Shared vfps should be a dict'
+
+        # parse configs
+        parsed_config_parameters = self.c_plugin._parse_config_from_fo_list(config_files)
+        assert isinstance(parsed_config_parameters, dict), 'Parsed config parameters should be a dict'
+    
     def test_compare_function(self):
-        result = self.c_plugin.compare_function([self.fw_one, self.fw_two], {})
-        assert isinstance(result, dict), 'result is not a dict'
+        result = self.c_plugin.compare_function([self.fw_one, self.fw_two, self.fw_three], {})
+        # result == dict[str, dict]
+        assert isinstance(result, dict), 'Result should be a dictionary'
+        assert all(isinstance(value, dict) for value in result.values()), 'Each value in result should be a dictionary'
     
     def test_identification(self):
         # Create file objects with different extensions and file type analysis results to test config type determination

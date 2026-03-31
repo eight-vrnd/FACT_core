@@ -20,6 +20,12 @@ from objects.file import FileObject
 if TYPE_CHECKING:
     from objects.file import FileObject
 
+# IDE specific settings
+# pyright: reportOperatorIssue=false
+# pyright: reportArgumentType=false
+# pyright: reportAttributeAccessIssue=false
+# pyright: reportOptionalMemberAccess=false
+
 class ComparePlugin(CompareBasePlugin):
     '''
     This plugin allows comparison of two (or more) configuration files. It handles identifying, parsing, and displaying config file key/value pairs for a variety of configuration file types
@@ -28,45 +34,64 @@ class ComparePlugin(CompareBasePlugin):
     NAME = 'file_config'
     DEPENDENCIES = ['file_type']
     VERSION = '0.0.3'
+    FILE = os.path.basename(__file__)
 
     def compare_function(self, fo_list, dependency_results: dict[str, dict]) -> dict[str, dict]:
-        # get all uids from all firmware objects' included files
-        included_file_uids = self._get_included_file_sets(fo_list)
-
-        #  get full file object for all uids
-        file_objects = self._get_included_file_objects_from_uid_list(included_file_uids)
-
-        # only keep config files - filter out non config files based on extension and file type
+        all_uids = self._get_included_uids(fo_list)
+        file_objects = self._get_objects_from_uids(all_uids)
         config_files = self._filter_config_files(file_objects)
-
-        # get uid list for filtered config files
         config_file_uids = self._get_uid_list_from_file_objects(config_files)
-
+        parsed_config_parameters = self._parse_config_from_fo_list(config_files)
+        
         #  get virtual file paths for all uids of filtered config files
         config_file_uids_with_vfps = self._get_file_vfp_from_uid_list(config_file_uids)
 
         # transform to list of vfp + uids that share that vfp
         shared_vfps = self._get_shared_vfps(config_file_uids_with_vfps)
-
-        parsed_config_parameters = self._parse_config_from_fo_list(config_files)
-
-        # Debug
-        results = {
-            'config_file_uids': {
-                'all': config_file_uids,
-                'collapse': True
-            },
-            'config_file_uids_with_vfps': {
-                fo.uid: config_file_uids_with_vfps for fo in fo_list
-            },
-            'shared_vfps': {
-                vfp: uids for vfp, uids in shared_vfps.items()
-            },
-            'parsed_config_parameters': {
-                uid: parsed_config_parameters for uid in config_file_uids
-            }
-        }
         
+        # for each vfp, get the parsed config parameters for each uid and place them in the rootuid of the firmware object the file belongs to for table view
+        # e.g.
+        # results = {
+        #     <first config file uid>: {
+        #         <first firmware object rootuid>: <parsed config parameters from first config file vfp in first fw object>,
+        #         <second firmware object rootuid>: <parsed config parameters from first config file vfp in second fw object>,
+        #         ...
+        #     },
+        #     <second config file uid>: {
+        #         <first firmware object rootuid>: <parsed config parameters from second config file vfp in first fw object>,
+        #         <second firmware object rootuid>: <parsed config parameters from second config file vfp in second fw object>,
+        #         ...
+        #     },
+        #      ...
+        # }
+        
+        # results = {}
+        # for vfp, uids in shared_vfps.items():
+        #     for uid in uids:
+        #         # rootuid is stored in file object 
+        #         firmware_rootuid = 
+        #         if firmware_rootuid not in results:
+        #             results[firmware_rootuid] = {}
+        #         results[firmware_rootuid][vfp] = parsed_config_parameters.get(uid, {})
+
+
+        # # Debug
+        # results = {
+        #     'config_file_uids': {file_
+        #         'all': config_file_uids,
+        #         'collapse': True
+        #     },
+        #     'config_file_uids_with_vfps': {
+        #         fo.uid: config_file_uids_with_vfps for fo in fo_list
+        #     },
+        #     'shared_vfps': {
+        #         vfp: uids for vfp, uids in shared_vfps.items()
+        #     },
+        #     'parsed_config_parameters': {
+        #         uid: params for uid, params in parsed_config_parameters.items()
+        #     }
+        # }
+        results = {}
         return results
     
     def _parse_config_from_fo_list(self, fo_list: list[FileObject]) -> dict[str, dict[str, str]]:
@@ -108,7 +133,7 @@ class ComparePlugin(CompareBasePlugin):
             return 'toml'
         elif fo.file_name.endswith('.xml'):
             return 'xml'
-        elif fo.file_name.endswith('.csv'):
+        elif fo.file_name.endswith('.csv'): 
             return 'csv'
         
         # Check file type analysis results for indicators of config file type (e.g. "application/toml" mime type or "xml" in file type strings)
@@ -123,6 +148,11 @@ class ComparePlugin(CompareBasePlugin):
                 return 'csv'
             
         # Regex for file content indicators of config file type (e.g. presence of "<tags>" for xml files or presence of "[headers]" for toml files)
+        if fo.binary is None and fo.file_path is not None:
+            fo.create_binary_from_path() # if only a path is given, create binary using the built-in method
+        elif fo.file_path is None:
+            return None # no file contents to analyze
+
         file_content_ascii = fo.binary.decode('ascii', errors='ignore')
         if re.search(r'<\s*[^>]+>', file_content_ascii): # crude regex to check for presence of <tags> which may indicate an xml file
             return 'xml'
@@ -198,45 +228,39 @@ class ComparePlugin(CompareBasePlugin):
         Returns:
             dict[str, list[str]]: Dict of vfps that are shared across config files with the list of uids that share that vfp
         """
-
-        # config_file_uids_with_vfps = {
-        #   'uid_1': {'firmware1/config/example.config': ['example.config']},
-        #   'uid_2': {'firmware2/config/example.config': ['example.config']}
-        # }
         vfp_to_uids = {}
         for uid, vfps in config_file_uids_with_vfps.items():
-            for vfp in vfps.keys():
+            for vfp in vfps:
                 if vfp not in vfp_to_uids:
                     vfp_to_uids[vfp] = []
                 vfp_to_uids[vfp].append(uid)
-
-        # only keep vfps that are shared across multiple config files
-        shared_vfps = {vfp: uids for vfp, uids in vfp_to_uids.items() if len(uids) > 1}
+        
+        # filter to only vfps that are shared across config files (i.e. have more than 1 uid associated with them)
+        shared_vfps = {vfp: uids for vfp, uids in vfp_to_uids.items()}
         return shared_vfps
 
     @staticmethod
-    def _get_included_file_sets(fo_list: list[FileObject]) -> list[set[str]]:
-        """Returns a set for each firmware object containing the uids of all included file objects of that firmware object
+    def _get_included_uids(fo_list: list[FileObject]) -> list[str]:
+        """Returns a list of uids of all included files of all firmware objects
 
         Args:
             fo_list (list[FileObject]): Firmware object list
 
         Returns:
-            list[set[str]]: List of sets of file object uids, one set per firmware object
+            list[str]: List of uids of all included files of all firmware objects
         """
-        return [set(file_object.list_of_all_included_files) for file_object in fo_list]
+        return [uid for file_object in fo_list for uid in file_object.list_of_all_included_files]
 
-    def _get_included_file_objects_from_uid_list(self, uid_list: list[set[str]]) -> list[FileObject]:
-        """Generate a list of file objects for all uids of all firmware objects
+    def _get_objects_from_uids(self, uid_list: list[str]) -> list[FileObject]:
+        """Get list of file objects from a list of sets of uids
 
         Args:
-            uid_list (list[set[str]]): List of sets of file object uids, one set per firmware object
+            uid_list (list[str]): List of uids
 
         Returns:
             list[FileObject]: List of file objects each with their respective attributes
         """
-        included_file_uids_flat = set().union(*uid_list)
-        file_objects = self.database.get_objects_by_uid_list(included_file_uids_flat)
+        file_objects = self.database.get_objects_by_uid_list(uid_list)
         return file_objects
 
     def _get_file_vfp_from_uid_list(self, uid_list: list[str]) -> dict[str, dict[str, list[str]]]:
@@ -333,7 +357,17 @@ class ComparePlugin(CompareBasePlugin):
             dict: Dict of key value strings
         """
         # Empty file handling
-        if binary_data.strip() == b'':
+        if binary_data == b'':
+            return {}
+        
+        if binary_data is None:
+            return {}
+        
+        try:
+            file_content_ascii = binary_data.decode('ascii', errors='ignore')
+        except:
+            # log the error to console for debug
+            print("Error decoding binary data to ascii. Returning empty dict.")
             return {}
 
         # Use best parsing strategy based on type
