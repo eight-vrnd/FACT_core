@@ -78,6 +78,14 @@ class TestComparePluginFileConfig(ComparePluginTest):
     def setup_plugin(self):
         return ComparePlugin(db_interface=DbMock(), view_updater=CommonDatabaseMock())
     
+    def setup_test_fw(self):
+        """
+        Mockup firmware files with included config files similar to each other for testing of identification, parsing, and comparison
+        """
+        self.fw_one = FW_ONE
+        self.fw_two = FW_TWO
+        self.fw_three = FW_THREE
+        
     def test_setup_selfcheck(self):
         # Check firmware objects
         assert isinstance(self.fw_one, FileObject), 'fw_one is not a FileObject'
@@ -102,18 +110,47 @@ class TestComparePluginFileConfig(ComparePluginTest):
         assert is_list_of_uids(self.fw_one.list_of_all_included_files), 'List of included files should be a list of uids'
         assert is_list_of_uids(self.fw_two.list_of_all_included_files), 'List of included files should be a list of uids'
         assert is_list_of_uids(self.fw_three.list_of_all_included_files), 'List of included files should be a list of uids'
-
-    def setup_test_fw(self):
-        """
-        Mockup firmware files with included config files similar to each other for testing of identification, parsing, and comparison
-        """
-        self.fw_one = FW_ONE
-        self.fw_two = FW_TWO
-        self.fw_three = FW_THREE
         
     def test_compare_function(self):
         result = self.c_plugin.compare_function([self.fw_one, self.fw_two], {})
         assert isinstance(result, dict), 'result is not a dict'
+    
+    def test_identification(self):
+        # Create file objects with different extensions and file type analysis results to test config type determination
+        fo_config = create_test_file_object(bin_path='firmware1/config/example.config')
+        fo_config.create_binary_from_path()
+        fo_config.processed_analysis['file_type'] = {'mime': 'text/plain'}
+        
+        fo_xml = create_test_file_object(bin_path='firmware1/config/example.xml')
+        fo_xml.create_binary_from_path()
+        fo_xml.processed_analysis['file_type'] = {'mime': 'text/plain'}
+        
+        fo_toml = create_test_file_object(bin_path='firmware1/config/example.toml')
+        fo_toml.create_binary_from_path()
+        fo_toml.processed_analysis['file_type'] = {'mime': 'text/plain'}
+        
+        fo_unknown = create_test_file_object(bin_path='firmware1/config/example')
+        fo_unknown.create_binary_from_path()
+        fo_unknown.processed_analysis['file_type'] = {'mime': 'text/plain'}
+        
+            # false positives
+        fo_js = create_test_file_object(bin_path='firmware1/config/example.js')
+        fo_js.create_binary_from_path()
+        fo_js.processed_analysis['file_type'] = {'mime': 'application/javascript'}
+        
+        # is config file?
+        assert self.c_plugin._is_config_file(fo_config) == True, 'Should identify .config file as config file'
+        assert self.c_plugin._is_config_file(fo_xml) == True, 'Should identify .xml file as config file'
+        assert self.c_plugin._is_config_file(fo_toml) == True, 'Should identify .toml file as config file'
+        assert self.c_plugin._is_config_file(fo_unknown) == True, 'Should identify file with no extension as config file'
+        assert self.c_plugin._is_config_file(fo_js) == False, 'Should not identify application/javascript file as config file' 
+    
+        # what type?
+        assert self.c_plugin._determine_config_type(fo_config) == 'dualkey', 'Config type should be dualkey for .config files'
+        assert self.c_plugin._determine_config_type(fo_xml) == 'xml', 'Config type should be xml for .xml files'
+        assert self.c_plugin._determine_config_type(fo_toml) == 'toml', 'Config type should be toml for .toml files'
+        assert self.c_plugin._determine_config_type(fo_unknown) == None, 'Config type should be None for unknown file types'
+        assert self.c_plugin._determine_config_type(fo_js) == None, 'Config type should be None for application/javascript files'
     
     def test_parse_config_from_binary_empty_file(self):
         # Empty file should return empty dict

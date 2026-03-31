@@ -61,6 +61,9 @@ class ComparePlugin(CompareBasePlugin):
             },
             'shared_vfps': {
                 vfp: uids for vfp, uids in shared_vfps.items()
+            },
+            'parsed_config_parameters': {
+                uid: parsed_config_parameters for uid in config_file_uids
             }
         }
         
@@ -79,11 +82,17 @@ class ComparePlugin(CompareBasePlugin):
                     'uid_2': {'key1': 'value3', 'key2': 'value4'}
                 }
         """
-        for fo in fo_list:
+        uid_with_contents = {}
+        
+        for fo in fo_list:            
             # Check which config type the file is
             config_file_type = self._determine_config_type(fo)
+            
             # Parse config parameters from file binary using the appropriate parsing strategy for the config type
-            fo.parsed_config_parameters = self._parse_config_from_binary(fo.binary, filetype=config_file_type)
+            # keys: fo.uid: self._parse_config_from_binary(fo.binary, filetype=config_file_type)
+            uid_with_contents[fo.uid] = self._parse_config_from_binary(fo.binary, filetype=config_file_type)
+        
+        return uid_with_contents
 
     def _determine_config_type(self, fo: FileObject) -> str | None:
         """Determine the config file type based on file extension and file type analysis results
@@ -200,48 +209,15 @@ class ComparePlugin(CompareBasePlugin):
         uid_vfp = self.database.get_vfps_for_uid_list(uid_list)
         return uid_vfp
     
-    def _get_config_file_type(self, fo: FileObject) -> str | None:
-        """Return a string representing the type of config file based on the file extension and/or content
-
-        Args:
-            fo (FileObject): File object to check for config file type
-
-        Returns:
-            str | None: String representing the type of config file or None if it cannot be determined
-        """
-        # Use results of file analysis plugin if available
-        
-        # Snippet from file object Class:
-            # : Analysis results for this file.
-            # :
-            # : Structure of results:
-            # : The first level of this dict is a pair of ``'plugin_name': <result_dict>`` pairs.
-            # : The result dict can have any content, but always has at least the fields:
-            # :
-            # : * analysis_date - float representing the time of analysis in unix time.
-            # : * plugin_version - str defining the version of each plugin at time of analysis.
-            # : * summary - list holding a summary of each file's result, that can be aggregated.
-            # self.processed_analysis = {}
-        
-        # This is an example result of file_analysis:
-            # {
-            #     "full": "ASCII text",
-            #     "mime": "text/plain"
-            # }
-        # fo.processed_analysis.get('file_analysis', {}).get('mime', '') # untested
-    
     def _is_config_file(self, fo: FileObject) -> bool:
-        if fo.processed_analysis.get('file_type', {}).get('mime', '').startswith('text/'):
-            return False
-
         # File extension
         valid_file_extensions = ['config', 'conf', 'cfg', 'ini', 'toml', 'yaml', 'yml', 'xml']
         if any(fo.file_name.endswith(ext) for ext in valid_file_extensions):
             return True
         
         # Check MIME type and filter out application/* file types
-        fo.processed_analysis.get('file_analysis', {}).get('mime', '')
-        if fo.processed_analysis.get('file_analysis', {}).get('mime', '').startswith('application/'):
+        # fo.processed_analysis.get('file_type', {}).get('mime', '')
+        if fo.processed_analysis.get('file_type', {}).get('mime', '').startswith('application/'):
             return False
         
         # Ensure binary 
@@ -431,4 +407,55 @@ class ComparePlugin(CompareBasePlugin):
                 key1, key2, value = parts[0], parts[1], ' '.join(parts[2:])
                 config_dict[f"{key1} {key2}"] = value
 
+        return config_dict
+
+    def _parse_helper_csv(self, binary_data: bytes) -> dict:
+        """Parse a csv config file from binary data and return a dict of key value strings
+
+        Args:
+            binary_data (bytes): Binary data of the csv file
+
+        Returns:
+            dict: Dict of key value strings
+        """
+        config_dict = {}
+        for line in binary_data.decode('ascii', errors='ignore').splitlines():
+            line = line.strip() # Remove leading/trailing whitespace
+            if not line:
+                continue
+            parts = line.split(',')
+            if len(parts) >= 2:
+                key = parts[0].strip()
+                value = ','.join(parts[1:]).strip() # In case there are additional commas in the value
+                config_dict[key] = value
+        return config_dict
+
+    def _parse_helper_yaml(self, binary_data: bytes) -> dict:
+        """Parse a yaml config file from binary data and return a dict of key value strings
+
+        Args:
+            binary_data (bytes): Binary data of the yaml file
+
+        Returns:
+            dict: Dict of key value strings
+        """
+        # treats nestes keys as a composite key (e.g. "parentkey childkey1 childkey2" for parentkey:\n  childkey1:\n    childkey2: value)
+        config_dict = {}
+        current_parent_keys = []
+        for line in binary_data.decode('ascii', errors='ignore').splitlines():
+            line = line.rstrip() # Remove trailing whitespace but keep leading whitespace for indentation
+            if not line or line.lstrip().startswith(('#', ';')):
+                continue
+            indent_level = len(line) - len(line.lstrip())
+            key_value_part = line.lstrip()
+            if ':' in key_value_part:
+                key, value = key_value_part.split(':', 1)
+                key = key.strip()
+                value = value.strip()
+                # Update current parent keys based on indentation level
+                while current_parent_keys and current_parent_keys[-1][1] >= indent_level:
+                    current_parent_keys.pop()
+                current_parent_keys.append((key, indent_level))
+                composite_key = ' '.join(k for k, _ in current_parent_keys)
+                config_dict[composite_key] = value
         return config_dict
