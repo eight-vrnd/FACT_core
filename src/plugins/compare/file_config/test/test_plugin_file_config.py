@@ -1,7 +1,7 @@
 import pytest
 import os
 
-from common_helper_files import get_dir_of_file
+from common_helper_files import get_dir_of_file, get_binary_from_file
 from objects.file import FileObject
 from objects.firmware import Firmware
 from plugins.compare.file_config.code.file_config import ComparePlugin
@@ -10,8 +10,13 @@ from test.unit.compare.compare_plugin_test_class import ComparePluginTest
 from helperFunctions.uid import create_uid, is_list_of_uids, is_uid
 
 # Setting up test firmware objects to allow DbMock class to access file objects
+# Manually add binaries to included file objects due to paths being different from live system
+TEST_DATA_DIR = os.path.join(get_dir_of_file(__file__), 'data')
+
 FW_ONE = create_test_firmware(device_name='dev_1_firmware_1', bin_path='firmware1/firmware1.zip', all_files_included_set=True)
-FW_ONE.add_included_file(create_test_file_object(bin_path='firmware1/config/example.config'))
+FO_ONE = create_test_file_object(bin_path='firmware1/config/example.config')
+FO_ONE.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.config')
+FW_ONE.add_included_file(FO_ONE)
 
 FW_TWO = create_test_firmware(device_name='dev_1_firmware_2', bin_path='firmware2/firmware2.zip', all_files_included_set=True)
 FW_TWO.add_included_file(create_test_file_object(bin_path='firmware2/config/example.config'))
@@ -29,7 +34,7 @@ class DbMock:
         for uid in uid_list:
             # Check which test firmware the uid belongs to and return the corresponding file object
             if uid in FW_ONE.list_of_all_included_files:
-                file_objects.append(create_test_file_object(bin_path='firmware1/config/example.config', uid=uid))
+                file_objects.append(FO_ONE)
             elif uid in FW_TWO.list_of_all_included_files:
                 file_objects.append(create_test_file_object(bin_path='firmware2/config/example.config', uid=uid))
             elif uid in FW_THREE.list_of_all_included_files:
@@ -73,7 +78,6 @@ class TestComparePluginFileConfig(ComparePluginTest):
     # An initialized plugin instance is available at self.c_plugin
     PLUGIN_NAME = 'file_config'
     PLUGIN_CLASS = ComparePlugin
-    TEST_DATA_DIR = os.path.join(get_dir_of_file(__file__), 'data')
     
     def setup_plugin(self):
         return ComparePlugin(db_interface=DbMock(), view_updater=CommonDatabaseMock())
@@ -83,10 +87,16 @@ class TestComparePluginFileConfig(ComparePluginTest):
         Mockup firmware files with included config files similar to each other for testing of identification, parsing, and comparison
         """
         self.fw_one = FW_ONE
+        self.fo_one = FO_ONE
         self.fw_two = FW_TWO
         self.fw_three = FW_THREE
         
     def test_setup_selfcheck(self):
+        # Check functionality of creating binaries from path
+        assert self.fo_one.file_path.endswith('firmware1/config/example.config'), 'File path should be set correctly'
+        assert self.fo_one.binary is not None, 'Binary should be created from path'
+        assert self.fo_one.binary != b'', 'Binary should not be empty'
+        
         # Check firmware objects
         assert isinstance(self.fw_one, FileObject), 'fw_one is not a FileObject'
         assert isinstance(self.fw_two, FileObject), 'fw_two is not a FileObject'
@@ -117,39 +127,45 @@ class TestComparePluginFileConfig(ComparePluginTest):
     
     def test_identification(self):
         # Create file objects with different extensions and file type analysis results to test config type determination
-        fo_config = create_test_file_object(bin_path='firmware1/config/example.config')
-        fo_config.create_binary_from_path()
-        fo_config.processed_analysis['file_type'] = {'mime': 'text/plain'}
+        fo_dualkey = create_test_file_object(bin_path='firmware1/config/example.config')
+        fo_dualkey.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.config')
+        fo_dualkey.processed_analysis['file_type'] = {'mime': 'text/plain'}
+        
+        fo_dualkey_b = create_test_file_object(bin_path='firmware1/config/example.b.config')
+        fo_dualkey_b.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.b.config')
+        fo_dualkey_b.processed_analysis['file_type'] = {'mime': 'text/plain'}
         
         fo_xml = create_test_file_object(bin_path='firmware1/config/example.xml')
-        fo_xml.create_binary_from_path()
+        fo_xml.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.xml')
         fo_xml.processed_analysis['file_type'] = {'mime': 'text/plain'}
         
         fo_toml = create_test_file_object(bin_path='firmware1/config/example.toml')
-        fo_toml.create_binary_from_path()
+        fo_toml.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.toml')
         fo_toml.processed_analysis['file_type'] = {'mime': 'text/plain'}
         
-        fo_unknown = create_test_file_object(bin_path='firmware1/config/example')
-        fo_unknown.create_binary_from_path()
-        fo_unknown.processed_analysis['file_type'] = {'mime': 'text/plain'}
+        fo_general_config = create_test_file_object(bin_path='firmware1/config/example')
+        fo_general_config.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example')
+        fo_general_config.processed_analysis['file_type'] = {'mime': 'text/plain'}
         
             # false positives
         fo_js = create_test_file_object(bin_path='firmware1/config/example.js')
-        fo_js.create_binary_from_path()
+        fo_js.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.js')
         fo_js.processed_analysis['file_type'] = {'mime': 'application/javascript'}
         
         # is config file?
-        assert self.c_plugin._is_config_file(fo_config) == True, 'Should identify .config file as config file'
+        assert self.c_plugin._is_config_file(fo_dualkey) == True, 'Should identify .config file as config file'
+        assert self.c_plugin._is_config_file(fo_dualkey_b) == True, 'Should identify .b.config file as config file'
         assert self.c_plugin._is_config_file(fo_xml) == True, 'Should identify .xml file as config file'
         assert self.c_plugin._is_config_file(fo_toml) == True, 'Should identify .toml file as config file'
-        assert self.c_plugin._is_config_file(fo_unknown) == True, 'Should identify file with no extension as config file'
+        assert self.c_plugin._is_config_file(fo_general_config) == True, 'Should identify file with no extension as config file'
         assert self.c_plugin._is_config_file(fo_js) == False, 'Should not identify application/javascript file as config file' 
     
         # what type?
-        assert self.c_plugin._determine_config_type(fo_config) == 'dualkey', 'Config type should be dualkey for .config files'
+        assert self.c_plugin._determine_config_type(fo_dualkey) == 'dualkey', 'Config type should be dualkey for .config files with dual key content'
+        assert self.c_plugin._determine_config_type(fo_dualkey_b) == 'dualkey', 'Config type should be dualkey for .b.config files with dual key content'
         assert self.c_plugin._determine_config_type(fo_xml) == 'xml', 'Config type should be xml for .xml files'
         assert self.c_plugin._determine_config_type(fo_toml) == 'toml', 'Config type should be toml for .toml files'
-        assert self.c_plugin._determine_config_type(fo_unknown) == None, 'Config type should be None for unknown file types'
+        assert self.c_plugin._determine_config_type(fo_general_config) == None, 'Config type should be None for unknown file types'
         assert self.c_plugin._determine_config_type(fo_js) == None, 'Config type should be None for application/javascript files'
     
     def test_parse_config_from_binary_empty_file(self):

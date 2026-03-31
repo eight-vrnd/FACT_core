@@ -112,19 +112,53 @@ class ComparePlugin(CompareBasePlugin):
             return 'csv'
         
         # Check file type analysis results for indicators of config file type (e.g. "application/toml" mime type or "xml" in file type strings)
-        if 'file_type' in fo.processed_analysis:
-            if 'mime' in fo.processed_analysis['file_type']:
-                mime = fo.processed_analysis['file_type']['mime']
-                if mime == 'application/toml':
-                    return 'toml'
-                elif mime == 'application/xml':
-                    return 'xml'
-            if 'type_strings' in fo.processed_analysis['file_type']:
-                type_strings = fo.processed_analysis['file_type']['type_strings']
-                if any('toml' in s for s in type_strings):
-                    return 'toml'
-                elif any('xml' in s for s in type_strings):
-                    return 'xml'
+        # file_type ends in xml or csv or toml? set type based on that
+        if 'file_type' in fo.processed_analysis and 'mime' in fo.processed_analysis['file_type']:
+            mime = fo.processed_analysis['file_type']['mime']
+            if mime.endswith('toml'):
+                return 'toml'
+            elif mime.endswith('xml'):
+                return 'xml'
+            elif mime.endswith('csv'):
+                return 'csv'
+            
+        # Regex for file content indicators of config file type (e.g. presence of "<tags>" for xml files or presence of "[headers]" for toml files)
+        file_content_ascii = fo.binary.decode('ascii', errors='ignore')
+        if re.search(r'<\s*[^>]+>', file_content_ascii): # crude regex to check for presence of <tags> which may indicate an xml file
+            return 'xml'
+        elif re.search(r'^\s*\[.*\]\s*$', file_content_ascii, re.MULTILINE): # crude regex to check for presence of [headers] which may indicate a toml file
+            return 'toml'
+        # csv
+        elif re.search(r'^[^#;\s]+?,[^#;\s]+', file_content_ascii, re.MULTILINE): # crude regex to check for presence of key,value pairs separated by a comma which may indicate a csv file
+            return 'csv'
+        
+        # Dual key
+        # Check for lines which match "key1 key2 value" or "key1 key2=value" pattern which may indicate a dual key config file
+        # value may contain spaces, but key1 and key2 should not contain spaces
+        # if there are multiple lines without comment indicators that do not match, use default parsing strategy instead because it might be a config file with values that contain spaces
+        invalid_lines = 0 # e.g. "key value" with no third part
+        dualkey_lines = 0
+        comment_lines = 0
+        for line in file_content_ascii.splitlines():
+            line = line.strip() # Remove leading/trailing whitespace
+            if not line:
+                continue
+            elif line.startswith(('#', ';')):
+                comment_lines += 1
+                continue
+            # check for just "key value" lines
+            # careful not to match "key1 key2=value"
+            # also include quoted values with ' or " e.g. k1 "value with spaces"  key1 ='value with spaces'
+            if (re.match(r'^[^\s]+?\s+[^\s]+?$', line) or re.match(r'^[^\s]+?\s+[^\s]+?\s+["\'].*["\']$', line)) and not re.match(r'^\s*(\S+)\s+([^=\s]+)=(.+)$', line): # crude regex to check for "key value" pattern without an equals sign which may indicate a dual key config file, but exclude lines that match the "key1 key2=value" pattern
+                invalid_lines += 1
+                break
+            elif re.match(r'^[^\s]+?\s+[^\s]+?\s+.+$', line): # crude regex to check for "key1 key2 value" pattern
+                dualkey_lines += 1
+            elif re.match(r'^[^\s]+?\s+[^\s]+?=.+$', line): # crude regex to check for "key1 key2=value" pattern
+                dualkey_lines += 1
+        
+        if invalid_lines == 0 and dualkey_lines > 0:
+            return 'dualkey'
 
         # Fallback to default parsing strategy
         return None
@@ -211,14 +245,25 @@ class ComparePlugin(CompareBasePlugin):
     
     def _is_config_file(self, fo: FileObject) -> bool:
         # File extension
-        valid_file_extensions = ['config', 'conf', 'cfg', 'ini', 'toml', 'yaml', 'yml', 'xml']
-        if any(fo.file_name.endswith(ext) for ext in valid_file_extensions):
+        extension_whitelist = ['config', 'conf', 'cfg', 'ini', 'toml', 'yaml', 'yml', 'xml']
+        extension_blacklist = ['exe', 'dll', 'bin', 'so', 'dylib', 'elf', 'py', 'js', 'c', 'cpp', 'h', 'sh', 'bat']
+        if any(fo.file_name.endswith(ext) for ext in extension_whitelist):
             return True
+        elif any(fo.file_name.endswith(ext) for ext in extension_blacklist):
+            return False
         
         # Check MIME type and filter out application/* file types
-        # fo.processed_analysis.get('file_type', {}).get('mime', '')
-        if fo.processed_analysis.get('file_type', {}).get('mime', '').startswith('application/'):
-            return False
+        # Whitelist is checked before blacklist!
+        mime_whitelist_startswith = []
+        mime_whitelist = ['text/plain', 'text/x-ini', 'text/csv', 'application/toml', 'application/xml', ' application/json', 'text/xml', 'application/xml']
+        mime_blacklist_startswith = ['application/','image/', 'audio/', 'video/', 'font/']
+        mime_blacklist = ['text/css', 'text/html', 'text/javascript']
+        if 'file_type' in fo.processed_analysis and 'mime' in fo.processed_analysis['file_type']:
+            mime = fo.processed_analysis['file_type']['mime']
+            if any(mime.startswith(prefix) for prefix in mime_whitelist_startswith) or mime in mime_whitelist:
+                return True
+            elif any(mime.startswith(prefix) for prefix in mime_blacklist_startswith) or mime in mime_blacklist:
+                return False
         
         # Ensure binary 
         if fo.binary is None and fo.file_path is not None:
@@ -459,3 +504,14 @@ class ComparePlugin(CompareBasePlugin):
                 composite_key = ' '.join(k for k, _ in current_parent_keys)
                 config_dict[composite_key] = value
         return config_dict
+    
+    def _parse_helper_list(self, binary_data: bytes) -> dict:
+        """Parse a config file from binary data that does not contain key value pairs but rather a list of values (e.g. for config files that just contain a list of enabled features or filepaths) and return a dict with the list of values under a generic "list" key
+
+        Args:
+            binary_data (bytes): Binary data of the config file
+
+        Returns:
+            dict: Dict of key value strings
+        """
+        raise NotImplementedError()
