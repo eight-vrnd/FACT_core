@@ -26,6 +26,22 @@ class TestComparePluginFileCoverage(ComparePluginTest):
 
     def setup_plugin(self):
         return ComparePlugin(db_interface=DbMock(), view_updater=CommonDatabaseMock())
+    
+    def test_compare_function(self):
+        self.fw_one.list_of_all_included_files.append('foo')
+        self.fw_one.list_of_all_included_files.append('bar')
+        self.fw_two.list_of_all_included_files.append('foo')
+        self.fw_two.list_of_all_included_files.append('bar')
+        result = self.c_plugin.compare_function([self.fw_one, self.fw_two], {})
+        assert len(result.keys()) == 1
+        assert 'similar_files' in result, 'similar_files key not in result'
+        similar_files = result['similar_files']
+        assert isinstance(similar_files, dict), 'similar_files should be a dict'
+        assert len(similar_files.keys()) == 1, 'There should be one group of similar files'
+        for group_id, match_dict in similar_files.items():
+            assert 'uid_1' in match_dict and match_dict['uid_1'] == 'file1', 'uid_1 should be matched to file1'
+            assert 'uid_4' in match_dict and match_dict['uid_4'] == 'file2', 'uid_4 should be matched to file2'
+            assert match_dict['similarity'] == '100', 'similarity value should be 100'
 
     def test_get_intersection_of_files(self):
         self.fw_one.list_of_all_included_files.append('foo')

@@ -45,63 +45,53 @@ class ComparePlugin(CompareBasePlugin):
         
         #  get virtual file paths for all uids of filtered config files
         config_file_uids_with_vfps = self._get_file_vfp_from_uid_list(config_file_uids)
-
-        # transform to list of vfp + uids that share that vfp
-        shared_vfps = self._get_shared_vfps(config_file_uids_with_vfps)
-        
-        # for each vfp, get the parsed config parameters for each uid and place them in the rootuid of the firmware object the file belongs to for table view
-        # e.g.
-        # results = {
-        #     <first config file name>: {
-        #         <first firmware object rootuid>: <parsed config parameters from first config file vfp in first fw object>,
-        #         <second firmware object rootuid>: <parsed config parameters from first config file vfp in second fw object>,
-        #         ...
-        #     },
-        #     <second config file name>: {
-        #         <first firmware object rootuid>: <parsed config parameters from second config file vfp in first fw object>,
-        #         <second firmware object rootuid>: <parsed config parameters from second config file vfp in second fw object>,
-        #         ...
-        #     },
-        #      ...
-        # }
+        # {<uid>: {<rootuid>: [list of vfp strings]}}
         
         results = {}
-        for vfp, uids in shared_vfps.items():
-            config_file_name_to_show_in_view = vfp.split('/')[-1] # get the file name from the vfp to show in the view
-            results[config_file_name_to_show_in_view] = {}
-            for uid in uids:
+        # config_file_uids_with_vfps = {'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855_0': {'firmware1/config/example.config': [...]}}
+        for uid, vfp_dict in config_file_uids_with_vfps.items():
+            for vfp, rootuid_list in vfp_dict.items():
+                # table row title should be the vfp of this config file
+                table_row_title = vfp
+                if results[table_row_title] is None:
+                    results[table_row_title] = {}
                 fo = self._get_objects_from_uids([uid])[0]
                 firmware_rootuid = self._get_rootuid_for_file_object(fo)
-                results[config_file_name_to_show_in_view][firmware_rootuid] = parsed_config_parameters.get(uid, {})
-                
-        # fill in any missing firmware objects that do not have the config file with empty dicts for the config parameters so that they show up in the table view with empty values instead of being left out entirely
-        all_firmware_rootuids = set(self._get_rootuid_for_file_object(fo) for fo in fo_list)
-        for config_file_name, firmware_dict in results.items():
-            for rootuid in all_firmware_rootuids:
-                if rootuid not in firmware_dict:
-                    results[config_file_name][rootuid] = {}
+                # transform parsed_config_parameters[uid] to list of strings, each string being "key: value" for table view display
+                if uid in parsed_config_parameters:
+                    config_parameters_str_list = [f"{key}: {value}" for key, value in parsed_config_parameters[uid].items()]
+                else:
+                    config_parameters_str_list = []
+                results[table_row_title][firmware_rootuid] = config_parameters_str_list
+                results[table_row_title].update({'collapse': 'True'}) # collapse config parameters in table view by default since there can be a lot of them
+        
+        # strip vfp key down to just the file name for display in the view, but keep the full vfp in the debug info
+        results_stripped_vfp = {}
+        for vfp, firmware_dict in results.items():
+            file_name = vfp.split('/')[-1]
+            results_stripped_vfp[file_name] = firmware_dict
+        results = results_stripped_vfp
 
-        # # Debug
-        results = {
+        # # Debug - output all function outputs to compare with test setup
+        debug = {
             'config_file_uids': {
-                'all': config_file_uids,
-                'collapse': True
+                'all': ['config file uids:', str(config_file_uids)],
+                'collapse': False
             },
-            # 'config_file_uids_with_vfps': {
-            #     fo.uid: config_file_uids_with_vfps for fo in fo_list
-            # },
-            # 'shared_vfps': {
-            #     vfp: uids for vfp, uids in shared_vfps.items()
-            # },
-            # 'parsed_config_parameters': {
-            #     uid: params for uid, params in parsed_config_parameters.items()
-            # }
-            'results': {
-                'all': str(results), # results as string
+            'all_uids': {
+                'all': ['all uids:', str(all_uids)],
+                'collapse': False
+            },
+            'config_file_uids_with_vfps': {
+                'all': ['config file uids with vfps:', str(config_file_uids_with_vfps)],
+                'collapse': False
+            },
+             'parsed_config_parameters': {
+                'all': ['parsed config:', str(parsed_config_parameters)],
                 'collapse': False
             }
         }
-        return results
+        return results_stripped_vfp
     
     def _get_rootuid_for_file_object(self, fo: FileObject) -> str | None:
         """Get the rootuid of the firmware object that a file object belongs to
@@ -241,26 +231,6 @@ class ComparePlugin(CompareBasePlugin):
         """
         return [fo.uid for fo in file_objects]
 
-    def _get_shared_vfps(self, config_file_uids_with_vfps: dict[str, dict[str, list[str]]]) -> dict[str, list[str]]:
-        """Return a dict of vfps that are shared across config files with the list of uids that share that vfp
-
-        Args:
-            config_file_uids_with_vfps (dict[str, str]): Dict of file object uids with their respective vfps
-
-        Returns:
-            dict[str, list[str]]: Dict of vfps that are shared across config files with the list of uids that share that vfp
-        """
-        vfp_to_uids = {}
-        for uid, vfps in config_file_uids_with_vfps.items():
-            for vfp in vfps:
-                if vfp not in vfp_to_uids:
-                    vfp_to_uids[vfp] = []
-                vfp_to_uids[vfp].append(uid)
-        
-        # filter to only vfps that are shared across config files (i.e. have more than 1 uid associated with them)
-        shared_vfps = {vfp: uids for vfp, uids in vfp_to_uids.items()}
-        return shared_vfps
-
     @staticmethod
     def _get_included_uids(fo_list: list[FileObject]) -> list[str]:
         """Returns a list of uids of all included files of all firmware objects
@@ -395,9 +365,7 @@ class ComparePlugin(CompareBasePlugin):
         try:
             file_content_ascii = binary_data.decode('ascii', errors='ignore')
         except:
-            # log the error to console for debug
-            print("Error decoding binary data to ascii. Returning empty dict.")
-            return {}
+            return {'Error': 'Unable to decode file content'}
 
         # Use best parsing strategy based on type
         if filetype == 'toml':
@@ -504,16 +472,22 @@ class ComparePlugin(CompareBasePlugin):
         comment_indicator_characters = ['#', ';']
 
         config_dict = {}
-        valid_key_value_pattern_no_first_word = re.compile(r'^[^\s]+?\s+[^#;\s]+?\s+.+$')
+        pattern_1 = re.compile(r'^[^\s]+?\s+[^#;\s]+?\s+.+$') # e.g. network key value potentially with spaces
+        pattern_2 = re.compile(r'^\s*(\S+)\s+([^=\s]+)=(.+)$') # e.g. network key=value potentially with spaces
         for line in binary_data.decode('ascii', errors='ignore').splitlines():
             line = line.strip() # Remove leading/trailing whitespace
             if not line or any(line.startswith(char) for char in comment_indicator_characters):
                 continue
-            match = valid_key_value_pattern_no_first_word.match(line)
+            match = pattern_2.match(line)
             if match:
-                parts = line.split()
-                key1, key2, value = parts[0], parts[1], ' '.join(parts[2:])
+                key1, key2, value = match.group(1), match.group(2), match.group(3).strip()
                 config_dict[f"{key1} {key2}"] = value
+            else:
+                match = pattern_1.match(line)
+                if match:
+                    parts = line.split()
+                    key1, key2, value = parts[0], parts[1], ' '.join(parts[2:])
+                    config_dict[f"{key1} {key2}"] = value
 
         return config_dict
 

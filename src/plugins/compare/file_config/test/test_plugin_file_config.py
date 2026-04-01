@@ -22,11 +22,13 @@ TEST_DATA_DIR = os.path.join(get_dir_of_file(__file__), 'data')
 FW_ONE = create_test_firmware(device_name='dev_1_firmware_1', bin_path='firmware1/firmware1.zip', all_files_included_set=True)
 FO_ONE = create_test_file_object(bin_path='firmware1/config/example.config')
 FO_ONE.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.config')
+FO_ONE.root_uid = FW_ONE.root_uid
 FW_ONE.add_included_file(FO_ONE)
 
 FW_TWO = create_test_firmware(device_name='dev_1_firmware_2', bin_path='firmware2/firmware2.zip', all_files_included_set=True)
 FO_TWO = create_test_file_object(bin_path='firmware2/config/example.config')
 FO_TWO.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware2/config/example.config')
+FO_TWO.root_uid = FW_TWO.root_uid
 FW_TWO.add_included_file(FO_TWO)
 
 FW_THREE = create_test_firmware(device_name='dev_1_firmware_3', bin_path='firmware3/firmware3.zip', all_files_included_set=True)
@@ -134,13 +136,11 @@ class TestComparePluginFileConfig(ComparePluginTest):
         # fo_list is the list of firmware objects to be compares
         fo_list = [self.fw_one, self.fw_two, self.fw_three]
         
-        # get all uids from all firmware objects' included files --> list[set[str]]
-        included_file_uids = self.c_plugin._get_included_file_sets(fo_list)
-        assert isinstance(included_file_uids, list), 'Included file uids should be a list'
-        assert all(isinstance(uid_set, set) for uid_set in included_file_uids), 'Each item in included file uids should be a set of uids'
-
+        # get all uids
+        included_file_uids = self.c_plugin._get_included_uids(fo_list)
+        
         #  get full file object for all uids
-        file_objects = self.c_plugin._get_included_file_objects_from_uid_list(included_file_uids)
+        file_objects = self.c_plugin._get_objects_from_uids(included_file_uids)
         assert all(isinstance(fo, FileObject) for fo in file_objects), 'All returned objects should be FileObjects'
 
         # only keep config files - filter out non config files based on extension and file type
@@ -246,7 +246,7 @@ class TestComparePluginFileConfig(ComparePluginTest):
     
     def test_parse_helper_dualkey(self):
         # Example dualkey config content
-        example_content = b"""
+        example_content_spaces = b"""
         type key value
         
         ; network config
@@ -258,7 +258,7 @@ class TestComparePluginFileConfig(ComparePluginTest):
         database host localhost
         database port 3306
         """
-        expected_output = {
+        expected_output_spaces = {
             'type key': 'value',
             'network port': '8080',
             'network bind': '0.0.0.0',
@@ -266,8 +266,32 @@ class TestComparePluginFileConfig(ComparePluginTest):
             'database host': 'localhost',
             'database port': '3306'
         }
-        output = self.c_plugin._parse_helper_dualkey(example_content)
-        assert output == expected_output, f'Unexpected output'
+        example_content_equals = b"""
+        type key value
+        
+        ; network config
+        network port=8080
+        network bind=0.0.0.0
+        network protocol=tcp
+        
+        ; database config
+        database host=localhost
+        database port=3306
+        database description=main database
+        """
+        expected_output_equals = {
+            'type key': 'value',
+            'network port': '8080',
+            'network bind': '0.0.0.0',
+            'network protocol': 'tcp',
+            'database host': 'localhost',
+            'database port': '3306',
+            'database description': 'main database'
+        }
+        output = self.c_plugin._parse_helper_dualkey(example_content_spaces)
+        assert output == expected_output_spaces, f'Unexpected output'
+        output = self.c_plugin._parse_helper_dualkey(example_content_equals)
+        assert output == expected_output_equals, f'Unexpected output'
         
     def test_parse_helper_default(self):
         # Example default config content
