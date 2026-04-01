@@ -3,9 +3,9 @@ from pprint import pprint
 
 def test_comparison_via_rest_api():
   uids_fw = ['8bf0a97817b41cdf9b541692405067e25747128ae9cecb102b1fadedcca623b8_87296559', '5ee712f300ee10f0d03393b34dd8f44f3bf3669d4849d13ee92bfd47e5e795df_88085627'] #actual fw
-  uids_test = ['05a8bf8f085b5fe8babe6989c31db8d8195da32170363f1f8f92fde66c28f548_258', '61f52d01b37dd4ecc306ae1e2ddafdf5c2c9550b70fd44e2f56795769e7134f9_288'] #test fw
+  uids_test = ['57a12723727334077e0d6786357c529a5b8a185f3efe70877d584fc640da1097_1859', '59a9265181ab70ee42523b15cccc109a8d2d53cb45d5af0e99e7487582bf6dcb_1982'] #test fw
   send_comparison_request(uids_test)
-  send_comparison_request(uids_fw)
+  # send_comparison_request(uids_fw)
 
 def send_comparison_request(uids_test):
     fact_ip = '127.0.0.1'
