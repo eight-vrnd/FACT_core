@@ -53,9 +53,8 @@ class ComparePlugin(CompareBasePlugin):
                     else: 
                         continue # if not, check other vfp paths
                 
-                # fallback
                 if local_file_path is None:
-                    local_file_path = sorted(vfp).pop().split('|')[-1]
+                    continue
                 
                 if local_file_path not in results.keys():
                     results[local_file_path] = {'collapse': 'True'}
@@ -65,7 +64,10 @@ class ComparePlugin(CompareBasePlugin):
                 else:
                     config_parameters_str_list = []
                 # first line/entry is the file uid as this will be clickable in the UI
-                results[local_file_path][firmware_root_uid] = [f"{file_object.uid}"] + config_parameters_str_list
+                results[local_file_path][firmware_root_uid] = [f"{file_object.uid}"] 
+                # add config_parameters_str_list
+                results[local_file_path][firmware_root_uid].extend(config_parameters_str_list)
+                
 
         print('################## RESULT ###############')
         pprint(results)
