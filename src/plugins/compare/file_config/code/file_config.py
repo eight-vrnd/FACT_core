@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from xml.etree import ElementTree as ET
 
 import toml
+from pprint import pprint
 
 from compare.PluginBase import CompareBasePlugin
 from storage.binary_service import BinaryService
@@ -34,51 +35,62 @@ class ComparePlugin(CompareBasePlugin):
         file_objects = self._get_objects_from_uids(all_uids)
         config_files = self._filter_config_files(file_objects)
         parsed_config_parameters = self._parse_config_from_fo_list(config_files)
-        #print('##################PARAMETERS###############')
-        #print(parsed_config_parameters)
-
-        #  get virtual file paths for all uids of filtered config files
-        # {<uid>: {<rootuid>: [list of vfp strings]}}
+        
+        print('################## PARAMETERS ###############')
+        pprint(parsed_config_parameters)
         
         results = {}
-        # config_file_uids_with_vfps = {'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855_0': {'firmware1/config/example.config': [...]}}
-        for file_object in config_files:
-            for root_uid, vfp in file_object.virtual_file_path.items():
-                for vfp_as_uid_list in self.database.get_file_tree_path(file_object.uid):
-                    if root_uid in vfp_as_uid_list and vfp_as_uid_list[0] in [fo.uid for fo in fo_list]:
-                        break
-                    continue
-
-                local_file_path = sorted(vfp).pop().split('|')[-1]
+        for file_object in config_files: # file_object is a config file
+            for root_uid, vfp in file_object.virtual_file_path.items(): # get vfps for all roots
+                firmware_root_uid = root_uid
+                for vfp_as_uid_list in self.database.get_file_tree_path(file_object.uid): # returns list of lists of uids for file_object.uid
+                    if root_uid in vfp_as_uid_list and vfp_as_uid_list[0] in [fo.uid for fo in fo_list]: # if the root_uid of our current config file is in the vfp path and the first uid in the vfp path is one of our firmware objects
+                        local_file_path = file_object.virtual_file_path[root_uid].pop().split('|')[-1]
+                        firmware_root_uid = vfp_as_uid_list[0]
+                        print(f"('################## Matched config file {file_object.file_name} with root uid {root_uid} to vfp path {vfp_as_uid_list} with local file path {local_file_path}")
+                        break # we found the vfp path that corresponds to the current root_uid, so we can stop looking through the vfp paths for this file_object
+                    else: 
+                        continue # if not, check other vfp paths
+                
+                # fallback
+                if not local_file_path:
+                    print('################## VFP MATCH ERROR ###############')
+                    print('    ################ vfp_as_uid_list #############')
+                    pprint(vfp_as_uid_list)
+                    print('    ################ firmware_root_uid #############')
+                    pprint(firmware_root_uid)
+                    print('    ################ root_uid #############')
+                    pprint(root_uid)
+                    print('    ################ file_object.virtual_file_path #############')
+                    pprint(file_object.virtual_file_path)
+                    local_file_path = sorted(vfp).pop().split('|')[-1]
+                
                 if local_file_path not in results.keys():
                     results[local_file_path] = {'collapse': 'True'}
-
-                # transform parsed_config_parameters[uid] to list of strings, each string being "key: value" for table view display
+                    
                 if file_object.uid in parsed_config_parameters:
-                    config_parameters_str_list = [f"{key.decode(errors='ignore').encode('utf-8', errors='ignore')}: {value.decode(errors='ignore').encode('utf-8', errors='ignore')}" for key, value in parsed_config_parameters[file_object.uid].items()]
+                    config_parameters_str_list = [f"{key}: {value}" for key, value in parsed_config_parameters[file_object.uid].items()]
                 else:
                     config_parameters_str_list = []
-                results[local_file_path][root_uid] = config_parameters_str_list
-                # break
+                    
+                results[local_file_path][firmware_root_uid] = config_parameters_str_list
 
-        # strip vfp key down to just the file name for display in the view, but keep the full vfp in the debug info
-        # print('##################RESULT###############')
-        # print(results)
+        print('################## RESULT ###############')
+        pprint(results)
+
         return results
-    
-    def _get_rootuid_for_file_object(self, fo: FileObject) -> str | None:
-        """Get the rootuid of the firmware object that a file object belongs to
+        
+    def _to_safe_str(self, s: str) -> str:
+        """Convert a string to a safe string that can be displayed in the view without causing encoding issues
 
         Args:
-            fo (FileObject): File object to get rootuid for
+            s (str): String to convert
 
         Returns:
-            str | None: Rootuid of the firmware object that the file object belongs to, or None if it cannot be determined
+            str: Safe string that can be displayed in the view without causing encoding issues
         """
-        # Check if root_uid attribute is set on file object
-        if hasattr(fo, 'root_uid') and fo.root_uid:
-            return fo.root_uid
-    
+        return s #FIXME
+        
     def _parse_config_from_fo_list(self, fo_list: list[FileObject]) -> dict[str, dict[str, str]]:
         """Parse config parameters from a list of file objects and return a dict of file object uid to dict of key value strings
 
@@ -365,13 +377,13 @@ class ComparePlugin(CompareBasePlugin):
             file_content_ascii = binary_data.decode('ascii', errors='ignore')
             root = ET.fromstring(file_content_ascii)
             config_dict = {}
-            def recursive_parse(element, parent_keys=[]):
-                current_keys = parent_keys + [element.tag]
+            def parse_element(element, parent_keys=[]): 
+                key = ' '.join(parent_keys + [element.tag])
                 if element.text and element.text.strip():
-                    config_dict[' '.join(current_keys)] = element.text.strip()
+                    config_dict[key] = element.text.strip()
                 for child in element:
-                    recursive_parse(child, current_keys)
-            recursive_parse(root)
+                    parse_element(child, parent_keys + [element.tag])
+            parse_element(root)
             return config_dict
         except Exception as e:
             print(f"Error parsing xml file: {e}")
