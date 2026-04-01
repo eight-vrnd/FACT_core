@@ -151,13 +151,9 @@ class TestComparePluginFileConfig(ComparePluginTest):
         config_file_uids = self.c_plugin._get_uid_list_from_file_objects(config_files)
         assert is_list_of_uids(config_file_uids), 'Config file uids should be a list of uids'
 
-        #  get virtual file paths for all uids of filtered config files
-        config_file_uids_with_vfps = self.c_plugin._get_file_vfp_from_uid_list(config_file_uids)
-        assert isinstance(config_file_uids_with_vfps, dict), 'Config file uids with vfps should be a dict'
-
         # transform to list of vfp + uids that share that vfp
-        shared_vfps = self.c_plugin._get_shared_vfps(config_file_uids_with_vfps)
-        assert isinstance(shared_vfps, dict), 'Shared vfps should be a dict'
+        # shared_vfps = self.c_plugin._get_shared_vfps(config_file_uids_with_vfps)
+        # assert isinstance(shared_vfps, dict), 'Shared vfps should be a dict'
 
         # parse configs
         parsed_config_parameters = self.c_plugin._parse_config_from_fo_list(config_files)

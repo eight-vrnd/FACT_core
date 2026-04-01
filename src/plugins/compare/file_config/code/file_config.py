@@ -1,21 +1,13 @@
 from __future__ import annotations
 
-import os
-import json
 import re
-
-import toml
-
-from itertools import combinations
 from typing import TYPE_CHECKING
 from xml.etree import ElementTree as ET
 
+import toml
+
 from compare.PluginBase import CompareBasePlugin
-from helperFunctions.compare_sets import iter_element_and_rest, remove_duplicates_from_list
-from helperFunctions.data_conversion import convert_uid_list_to_compare_id
-from helperFunctions.uid import is_uid, is_list_of_uids
-from objects.firmware import Firmware
-from objects.file import FileObject
+from storage.binary_service import BinaryService
 
 if TYPE_CHECKING:
     from objects.file import FileObject
@@ -33,65 +25,46 @@ class ComparePlugin(CompareBasePlugin):
 
     NAME = 'file_config'
     DEPENDENCIES = ['file_type']
-    VERSION = '0.0.3'
-    FILE = os.path.basename(__file__)
+    VERSION = '0.0.4'
+    FILE = __file__
 
     def compare_function(self, fo_list, dependency_results: dict[str, dict]) -> dict[str, dict]:
+        self.binary_service = BinaryService()
         all_uids = self._get_included_uids(fo_list)
         file_objects = self._get_objects_from_uids(all_uids)
         config_files = self._filter_config_files(file_objects)
-        config_file_uids = self._get_uid_list_from_file_objects(config_files)
         parsed_config_parameters = self._parse_config_from_fo_list(config_files)
-        
+        #print('##################PARAMETERS###############')
+        #print(parsed_config_parameters)
+
         #  get virtual file paths for all uids of filtered config files
-        config_file_uids_with_vfps = self._get_file_vfp_from_uid_list(config_file_uids)
         # {<uid>: {<rootuid>: [list of vfp strings]}}
         
         results = {}
         # config_file_uids_with_vfps = {'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855_0': {'firmware1/config/example.config': [...]}}
-        for uid, vfp_dict in config_file_uids_with_vfps.items():
-            for vfp, rootuid_list in vfp_dict.items():
-                # table row title should be the vfp of this config file
-                table_row_title = vfp
-                if results[table_row_title] is None:
-                    results[table_row_title] = {}
-                fo = self._get_objects_from_uids([uid])[0]
-                firmware_rootuid = self._get_rootuid_for_file_object(fo)
+        for file_object in config_files:
+            for root_uid, vfp in file_object.virtual_file_path.items():
+                for vfp_as_uid_list in self.database.get_file_tree_path(file_object.uid):
+                    if root_uid in vfp_as_uid_list and vfp_as_uid_list[0] in [fo.uid for fo in fo_list]:
+                        break
+                    continue
+
+                local_file_path = sorted(vfp).pop().split('|')[-1]
+                if local_file_path not in results.keys():
+                    results[local_file_path] = {'collapse': 'True'}
+
                 # transform parsed_config_parameters[uid] to list of strings, each string being "key: value" for table view display
-                if uid in parsed_config_parameters:
-                    config_parameters_str_list = [f"{key}: {value}" for key, value in parsed_config_parameters[uid].items()]
+                if file_object.uid in parsed_config_parameters:
+                    config_parameters_str_list = [f"{key.decode(errors='ignore').encode('utf-8', errors='ignore')}: {value.decode(errors='ignore').encode('utf-8', errors='ignore')}" for key, value in parsed_config_parameters[file_object.uid].items()]
                 else:
                     config_parameters_str_list = []
-                results[table_row_title][firmware_rootuid] = config_parameters_str_list
-                results[table_row_title].update({'collapse': 'True'}) # collapse config parameters in table view by default since there can be a lot of them
-        
-        # strip vfp key down to just the file name for display in the view, but keep the full vfp in the debug info
-        results_stripped_vfp = {}
-        for vfp, firmware_dict in results.items():
-            file_name = vfp.split('/')[-1]
-            results_stripped_vfp[file_name] = firmware_dict
-        results = results_stripped_vfp
+                results[local_file_path][root_uid] = config_parameters_str_list
+                # break
 
-        # # Debug - output all function outputs to compare with test setup
-        debug = {
-            'config_file_uids': {
-                'all': ['config file uids:', str(config_file_uids)],
-                'collapse': False
-            },
-            'all_uids': {
-                'all': ['all uids:', str(all_uids)],
-                'collapse': False
-            },
-            'config_file_uids_with_vfps': {
-                'all': ['config file uids with vfps:', str(config_file_uids_with_vfps)],
-                'collapse': False
-            },
-             'parsed_config_parameters': {
-                'all': ['parsed config:', str(parsed_config_parameters)],
-                'collapse': False
-            }
-        }
-        return results_stripped_vfp
+        # strip vfp key down to just the file name for display in the view, but keep the full vfp in the debug info
+        # print('##################RESULT###############')
+        # print(results)
+        return results
     
     def _get_rootuid_for_file_object(self, fo: FileObject) -> str | None:
         """Get the rootuid of the firmware object that a file object belongs to
@@ -127,7 +100,11 @@ class ComparePlugin(CompareBasePlugin):
             
             # Parse config parameters from file binary using the appropriate parsing strategy for the config type
             # keys: fo.uid: self._parse_config_from_binary(fo.binary, filetype=config_file_type)
-            uid_with_contents[fo.uid] = self._parse_config_from_binary(fo.binary, filetype=config_file_type)
+            if not fo.binary:
+                binary, _ = self.binary_service.get_binary_and_file_name(fo.uid)
+                uid_with_contents[fo.uid] = self._parse_config_from_binary(binary, filetype=config_file_type)
+            else:
+                uid_with_contents[fo.uid] = self._parse_config_from_binary(fo.binary, filetype=config_file_type)
         
         return uid_with_contents
 
@@ -262,10 +239,6 @@ class ComparePlugin(CompareBasePlugin):
         file_objects = self.database.get_objects_by_uid_list(uid_list)
         return file_objects
 
-    def _get_file_vfp_from_uid_list(self, uid_list: list[str]) -> dict[str, dict[str, list[str]]]:
-        uid_vfp = self.database.get_vfps_for_uid_list(uid_list)
-        return uid_vfp
-    
     def _is_config_file(self, fo: FileObject) -> bool:
         # File extension
         extension_whitelist = ['config', 'conf', 'cfg', 'ini', 'toml', 'yaml', 'yml', 'xml']
