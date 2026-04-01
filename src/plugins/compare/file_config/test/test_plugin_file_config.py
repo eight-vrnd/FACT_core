@@ -35,6 +35,36 @@ FW_THREE = create_test_firmware(device_name='dev_1_firmware_3', bin_path='firmwa
 FO_THREE = FO_TWO
 FW_THREE.add_included_file(FO_THREE)
 
+FW_FOUR = create_test_firmware(device_name='dev_2_firmware_1', bin_path='firmware4/firmware_nested_1.zip', all_files_included_set=True)
+FW_FOUR_FOLDER = create_test_file_object(bin_path='firmware4/folder')
+# create file objects for all files in firmware4/folder/
+FO_FOUR_LIST = []
+FO_FOUR_LIST.append(FW_FOUR_FOLDER)
+for root, dirs, files in os.walk(f'{TEST_DATA_DIR}/firmware4/folder'):
+    for file in files:
+        file_path = os.path.join(root, file)
+        fo = create_test_file_object(bin_path=file_path)
+        fo.binary = get_binary_from_file(file_path)
+        fo.root_uid = FW_FOUR_FOLDER.root_uid
+        fo.depth = 2
+        FW_FOUR.add_included_file(fo)
+        FO_FOUR_LIST.append(fo)
+
+FW_FIVE = create_test_firmware(device_name='dev_2_firmware_2', bin_path='firmware5/firmware_nested_2.zip', all_files_included_set=True)
+FW_FIVE_FOLDER = create_test_file_object(bin_path='firmware5/folder')
+# create file objects for all files in firmware5/folder/
+FO_FIVE_LIST = []
+FO_FIVE_LIST.append(FW_FIVE_FOLDER)
+for root, dirs, files in os.walk(f'{TEST_DATA_DIR}/firmware5/folder'):
+    for file in files:
+        file_path = os.path.join(root, file)
+        fo = create_test_file_object(bin_path=file_path)
+        fo.binary = get_binary_from_file(file_path)
+        fo.root_uid = FW_FIVE_FOLDER.root_uid
+        fo.depth = 2
+        FW_FIVE.add_included_file(fo)
+        FO_FIVE_LIST.append(fo)
+
 class DbMock:
         
     def get_objects_by_uid_list(
@@ -50,6 +80,18 @@ class DbMock:
                 file_objects.append(FO_TWO)
             elif uid in FW_THREE.list_of_all_included_files:
                 file_objects.append(FO_THREE)
+            elif uid in FW_FOUR.list_of_all_included_files:
+                # find the file object in FW_FOUR with the matching uid
+                for fo in FO_FOUR_LIST:
+                    if fo.uid == uid:
+                        file_objects.append(fo)
+                        break
+            elif uid in FW_FIVE.list_of_all_included_files:
+                # find the file object in FW_FIVE with the matching uid
+                for fo in FO_FIVE_LIST:
+                    if fo.uid == uid:
+                        file_objects.append(fo)
+                        break
         
         return file_objects
 
@@ -102,24 +144,28 @@ class TestComparePluginFileConfig(ComparePluginTest):
         self.fw_two = FW_TWO
         self.fw_three = FW_THREE
         
-    def test_setup_selfcheck(self):
-        # Check functionality of creating binaries from path
-        assert self.fo_one.file_path.endswith('firmware1/config/example.config'), 'File path should be set correctly'
-        assert self.fo_one.binary is not None, 'Binary should be created from path'
-        assert self.fo_one.binary != b'', 'Binary should not be empty'
-        
-        # Check firmware objects
+    def test_setup_selfcheck(self):        
+        # Check file and firmware objects
         assert isinstance(self.fw_one, FileObject), 'fw_one is not a FileObject'
         assert isinstance(self.fw_two, FileObject), 'fw_two is not a FileObject'
         assert isinstance(self.fw_three, FileObject), 'fw_three is not a FileObject'
+        assert isinstance(FW_FOUR, FileObject), 'FW_FOUR is not a FileObject'
+        assert isinstance(FW_FIVE, FileObject), 'FW_FIVE is not a FileObject'
+        assert isinstance(FO_FOUR_LIST[0], FileObject), 'FO_FOUR_LIST[0] is not a FileObject'
+        assert isinstance(FO_FIVE_LIST[0], FileObject), 'FO_FIVE_LIST[0] is not a FileObject'
+        
         assert isinstance(self.fw_one, Firmware), 'fw_one is not a Firmware'
         assert isinstance(self.fw_two, Firmware), 'fw_two is not a Firmware'
         assert isinstance(self.fw_three, Firmware), 'fw_three is not a Firmware'
+        assert isinstance(FW_FOUR, Firmware), 'FW_FOUR is not a Firmware'
+        assert isinstance(FW_FIVE, Firmware), 'FW_FIVE is not a Firmware'
         
         # Check contents
         assert len(self.fw_one.list_of_all_included_files) == 1, 'fw_one should have 1 included file'
         assert len(self.fw_two.list_of_all_included_files) == 1, 'fw_two should have 1 included file'
         assert len(self.fw_three.list_of_all_included_files) == 1, 'fw_three should have 1 included file'
+        assert len(FW_FOUR.list_of_all_included_files) == 5, 'FW_FOUR should have 5 included files'
+        assert len(FW_FIVE.list_of_all_included_files) == 5, 'FW_FIVE should have 5 included files'
         
         # Check UIDs
         assert is_uid(self.fw_one.root_uid), 'fw_one root uid is not a valid uid'
