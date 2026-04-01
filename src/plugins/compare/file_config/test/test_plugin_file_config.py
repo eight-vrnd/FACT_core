@@ -39,12 +39,10 @@ FW_THREE.add_included_file(FO_THREE)
 
 FW_FOUR = create_test_firmware(device_name='dev_2_firmware_1', bin_path=f'{TEST_DATA_DIR}/firmware4/firmware_nested_1.zip')
 FW_FOUR.list_of_all_included_files = []
-
 FW_FOUR_FOLDER = create_test_file_object(bin_path=f'{TEST_DATA_DIR}/firmware4/folder.tar.gz')
 FW_FOUR_FOLDER.depth = 1
 FW_FOUR_FOLDER.root_uid = FW_FOUR.uid
 FW_FOUR_FOLDER.list_of_all_included_files = []
-
 # create file objects for all files in firmware4/folder/
 FO_FOUR_LIST = []
 FO_FOUR_LIST.append(FW_FOUR_FOLDER)
@@ -52,46 +50,65 @@ for root, dirs, files in os.walk(f'{TEST_DATA_DIR}/firmware4/folder'):
     for file in files:
         file_path = os.path.join(root, file)
         fo = create_test_file_object(bin_path=f'{TEST_DATA_DIR}/firmware4/folder/{file}')
-        fo.virtual_file_path = f'firmware4/folder/{file}'
+        fo.virtual_file_path = {f'{FW_FOUR_FOLDER.uid}': [f'/{file}']}
         fo.binary = get_binary_from_file(file_path)
         FO_FOUR_LIST.append(fo)
-        
-pprint(FO_FOUR_LIST)
-
 for fo in FO_FOUR_LIST:
     if fo.uid != FW_FOUR_FOLDER.uid:
         FW_FOUR_FOLDER.files_included.add(fo)
         FW_FOUR_FOLDER.list_of_all_included_files.append(fo.uid)
         fo.root_uid = FW_FOUR_FOLDER.uid
-    
     FW_FOUR.files_included.add(fo)
     FW_FOUR.list_of_all_included_files.append(fo.uid)
     
-pprint(FW_FOUR.list_of_all_included_files)
+FW_FIVE = create_test_firmware(device_name='dev_2_firmware_1', bin_path=f'{TEST_DATA_DIR}/firmware5/firmware_nested_2.zip')
+FW_FIVE.list_of_all_included_files = []
+FW_FIVE_FOLDER = create_test_file_object(bin_path=f'{TEST_DATA_DIR}/firmware5/folder.tar.gz')
+FW_FIVE_FOLDER.depth = 1
+FW_FIVE_FOLDER.root_uid = FW_FIVE.uid
+FW_FIVE_FOLDER.list_of_all_included_files = []
+# create file objects for all files in firmware5/folder/
+FO_FIVE_LIST = []
+FO_FIVE_LIST.append(FW_FIVE_FOLDER)
+for root, dirs, files in os.walk(f'{TEST_DATA_DIR}/firmware5/folder'):
+    for file in files:
+        file_path = os.path.join(root, file)
+        fo = create_test_file_object(bin_path=f'{TEST_DATA_DIR}/firmware5/folder/{file}')
+        fo.virtual_file_path = {f'{FW_FIVE_FOLDER.uid}': [f'/{file}']}
+        fo.binary = get_binary_from_file(file_path)
+        FO_FIVE_LIST.append(fo)
+for fo in FO_FIVE_LIST:
+    if fo.uid != FW_FIVE_FOLDER.uid:
+        FW_FIVE_FOLDER.files_included.add(fo)
+        FW_FIVE_FOLDER.list_of_all_included_files.append(fo.uid)
+        fo.root_uid = FW_FIVE_FOLDER.uid
+    FW_FIVE.files_included.add(fo)
+    FW_FIVE.list_of_all_included_files.append(fo.uid)
 
-# FW_FIVE = create_test_firmware(device_name='dev_2_firmware_2', bin_path='firmware5/firmware_nested_2.zip', all_files_included_set=True)
-# FW_FIVE_FOLDER = create_test_file_object(bin_path='firmware5/folder.tar.gz')
-# FW_FIVE_FOLDER.depth = 1
-# FW_FIVE_FOLDER.root_uid = FW_FIVE.uid
-# FW_FIVE_FOLDER.list_of_all_included_files = []
-# # create file objects for all files in firmware5/folder/
-# FO_FIVE_LIST = []
-# for root, dirs, files in os.walk(f'{TEST_DATA_DIR}/firmware5/folder'):
-#     for file in files:
-#         file_path = os.path.join(root, file)
-#         fo = create_test_file_object(bin_path=f'{TEST_DATA_DIR}/firmware5/folder/{file}')
-#         fo.virtual_file_path = f'firmware5/folder/{file}'
-#         fo.binary = get_binary_from_file(file_path)
-#         fo.root_uid = FW_FIVE_FOLDER.uid
-#         FO_FIVE_LIST.append(fo)
-#         FW_FIVE_FOLDER.files_included.add(fo)
-#         # add uid to firmware's list of all included files
-#         FW_FIVE_FOLDER.list_of_all_included_files.append(fo.uid)
-# for fo in FO_FIVE_LIST:
-#     FW_FIVE.files_included.add(fo)
-#     FW_FIVE.list_of_all_included_files.append(fo.uid)
+print('Test setup done')
+
 
 class DbMock:
+    
+    def get_file_tree_path(self, uid: str) -> list[list[str]]:
+        # Return all vfps as list of uids for a given uid
+        # e.g.:
+        # [['59a9265181ab70ee42523b15cccc109a8d2d53cb45d5af0e99e7487582bf6dcb_1982', 'e8f4b4162c253904840c181551a81624f63a2eda10de902d646b4aae8d8e7b5a_1415', '13e29c8ad0bc971b0c18344c3652936e0c7987f7f9daa30680c9dca2f2a7d37f_14848', '05e2678ee7a4fc17dec9da1d33e74dd30f4065659b116f86ecd6e805820dbefc_1426']]
+        # in our case, return the correct vfp as uids for the uid. for fw 1-3, this is just [[root_uid, file_uid]]. for 4-5, this is [[fw_root_uid, folder_uid, file_uid]]
+        if uid in FW_ONE.list_of_all_included_files:
+            return [[FW_ONE.root_uid, FO_ONE.uid]]
+        elif uid in FW_TWO.list_of_all_included_files:
+            return [[FW_TWO.root_uid, FO_TWO.uid]]
+        elif uid in FW_THREE.list_of_all_included_files:
+            return [[FW_THREE.root_uid, FO_THREE.uid]]
+        elif uid in FW_FOUR.list_of_all_included_files:
+            for fo in FO_FOUR_LIST:
+                if fo.uid == uid:
+                    return [[FW_FOUR.root_uid, FW_FOUR_FOLDER.uid, fo.uid]]
+        elif uid in FW_FIVE.list_of_all_included_files:
+            for fo in FO_FIVE_LIST:
+                if fo.uid == uid:
+                    return [[FW_FIVE.root_uid, FW_FIVE_FOLDER.uid, fo.uid]]
         
     def get_objects_by_uid_list(
         self, uid_list: list[str] | set[str], analysis_filter: list[str] | None = None
@@ -112,46 +129,14 @@ class DbMock:
                     if fo.uid == uid:
                         file_objects.append(fo)
                         break
-            # elif uid in FW_FIVE.list_of_all_included_files:
-            #     # find the file object in FW_FIVE with the matching uid
-            #     for fo in FO_FIVE_LIST:
-            #         if fo.uid == uid:
-            #             file_objects.append(fo)
-            #             break
+            elif uid in FW_FIVE.list_of_all_included_files:
+                # find the file object in FW_FIVE with the matching uid
+                for fo in FO_FIVE_LIST:
+                    if fo.uid == uid:
+                        file_objects.append(fo)
+                        break
         
-        return file_objects
-
-    def get_vfps_for_uid_list(
-        self, uid_list: list[str] | set[str], root_uid: str | None = None
-    ) -> dict[str, dict[str, list[str]]]:
-        """
-        Gets all virtual file paths (see `get_vfps()`) for a list of UIDs. Returns a dictionary with key=uid and
-        value=vfp_dict for that file (vfp_dict is the same as the output of `get_vfps()` for that file). If `root_uid`
-        is set, only return the paths inside the firmware with UID `root_uid`.
-        """
-        
-        # vfps[uid] = {
-        #     'firmware1/config/example.config': ['example.config']
-        # }
-        
-        vfps = {}
-        
-        for uid in uid_list:
-            if uid in FW_ONE.list_of_all_included_files:
-                vfps[uid] = {
-                    'firmware1/config/example.config': ['example.config']
-                }
-            elif uid in FW_TWO.list_of_all_included_files:
-                vfps[uid] = {
-                    'firmware2/config/example.config': ['example.config']
-                }
-            elif uid in FW_THREE.list_of_all_included_files:
-                vfps[uid] = {
-                    'firmware2/config/example.config': ['example.config']
-                }
-        
-        return vfps
-        
+        return file_objects        
     
 class TestComparePluginFileConfig(ComparePluginTest):
     # An initialized plugin instance is available at self.c_plugin
@@ -245,6 +230,9 @@ class TestComparePluginFileConfig(ComparePluginTest):
         # result == dict[str, dict]
         assert isinstance(result, dict), 'Result should be a dictionary'
         assert all(isinstance(value, dict) for value in result.values()), 'Each value in result should be a dictionary'
+        
+        result = self.c_plugin.compare_function([FW_FOUR, FW_FIVE], {})
+        assert isinstance(result, dict), 'Result should be a dictionary'
     
     def test_identification(self):
         # Create file objects with different extensions and file type analysis results to test config type determination

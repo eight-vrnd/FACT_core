@@ -35,7 +35,7 @@ class ComparePlugin(CompareBasePlugin):
         file_objects = self._get_objects_from_uids(all_uids)
         config_files = self._filter_config_files(file_objects)
         parsed_config_parameters = self._parse_config_from_fo_list(config_files)
-        
+                
         print('################## PARAMETERS ###############')
         pprint(parsed_config_parameters)
         
@@ -43,26 +43,18 @@ class ComparePlugin(CompareBasePlugin):
         for file_object in config_files: # file_object is a config file
             for root_uid, vfp in file_object.virtual_file_path.items(): # get vfps for all roots
                 firmware_root_uid = root_uid
+                local_file_path = None
                 for vfp_as_uid_list in self.database.get_file_tree_path(file_object.uid): # returns list of lists of uids for file_object.uid
+                    
                     if root_uid in vfp_as_uid_list and vfp_as_uid_list[0] in [fo.uid for fo in fo_list]: # if the root_uid of our current config file is in the vfp path and the first uid in the vfp path is one of our firmware objects
                         local_file_path = file_object.virtual_file_path[root_uid].pop().split('|')[-1]
                         firmware_root_uid = vfp_as_uid_list[0]
-                        print(f"('################## Matched config file {file_object.file_name} with root uid {root_uid} to vfp path {vfp_as_uid_list} with local file path {local_file_path}")
                         break # we found the vfp path that corresponds to the current root_uid, so we can stop looking through the vfp paths for this file_object
                     else: 
                         continue # if not, check other vfp paths
                 
                 # fallback
-                if not local_file_path:
-                    print('################## VFP MATCH ERROR ###############')
-                    print('    ################ vfp_as_uid_list #############')
-                    pprint(vfp_as_uid_list)
-                    print('    ################ firmware_root_uid #############')
-                    pprint(firmware_root_uid)
-                    print('    ################ root_uid #############')
-                    pprint(root_uid)
-                    print('    ################ file_object.virtual_file_path #############')
-                    pprint(file_object.virtual_file_path)
+                if local_file_path is None:
                     local_file_path = sorted(vfp).pop().split('|')[-1]
                 
                 if local_file_path not in results.keys():
@@ -72,8 +64,8 @@ class ComparePlugin(CompareBasePlugin):
                     config_parameters_str_list = [f"{key}: {value}" for key, value in parsed_config_parameters[file_object.uid].items()]
                 else:
                     config_parameters_str_list = []
-                    
-                results[local_file_path][firmware_root_uid] = config_parameters_str_list
+                # first line/entry is the file uid as this will be clickable in the UI
+                results[local_file_path][firmware_root_uid] = [f"{file_object.uid}"] + config_parameters_str_list
 
         print('################## RESULT ###############')
         pprint(results)
@@ -106,25 +98,27 @@ class ComparePlugin(CompareBasePlugin):
         """
         uid_with_contents = {}
         
-        for fo in fo_list:            
-            # Check which config type the file is
-            config_file_type = self._determine_config_type(fo)
-            
-            # Parse config parameters from file binary using the appropriate parsing strategy for the config type
-            # keys: fo.uid: self._parse_config_from_binary(fo.binary, filetype=config_file_type)
+        print("########### CONFIG FILE TYPE ###########")
+        for fo in fo_list:
+        
             if not fo.binary:
                 binary, _ = self.binary_service.get_binary_and_file_name(fo.uid)
+                # Check which config type the file is
+                config_file_type = self._determine_config_type(fo, binary)
+                print(f"Detected {config_file_type} for {fo.file_name} / {fo.uid}")
                 uid_with_contents[fo.uid] = self._parse_config_from_binary(binary, filetype=config_file_type)
             else:
+                config_file_type = self._determine_config_type(fo)
                 uid_with_contents[fo.uid] = self._parse_config_from_binary(fo.binary, filetype=config_file_type)
         
         return uid_with_contents
 
-    def _determine_config_type(self, fo: FileObject) -> str | None:
+    def _determine_config_type(self, fo: FileObject, binary: bytes = None) -> str | None:
         """Determine the config file type based on file extension and file type analysis results
 
         Args:
             fo (FileObject): File object to determine config type for
+            binary (bytes): optional if fo has no binary set
 
         Returns:
             str | None: Config file type. Options: 'toml', 'xml', 'dualkey', or None if type cannot be determined
@@ -148,13 +142,10 @@ class ComparePlugin(CompareBasePlugin):
             elif mime.endswith('csv'):
                 return 'csv'
             
-        # Regex for file content indicators of config file type (e.g. presence of "<tags>" for xml files or presence of "[headers]" for toml files)
-        if fo.binary is None and fo.file_path is not None:
-            fo.create_binary_from_path() # if only a path is given, create binary using the built-in method
-        elif fo.file_path is None:
-            return None # no file contents to analyze
-
-        file_content_ascii = fo.binary.decode('ascii', errors='ignore')
+        if binary is not None:
+            file_content_ascii = binary.decode('ascii', errors='ignore')
+        else:
+            file_content_ascii = fo.binary.decode('ascii', errors='ignore')
         if re.search(r'<\s*[^>]+>', file_content_ascii): # crude regex to check for presence of <tags> which may indicate an xml file
             return 'xml'
         elif re.search(r'^\s*\[.*\]\s*$', file_content_ascii, re.MULTILINE): # crude regex to check for presence of [headers] which may indicate a toml file
