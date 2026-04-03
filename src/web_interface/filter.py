@@ -114,6 +114,21 @@ def list_group_collapse(input_data, btn_class=None):
     return ''
 
 
+def list_group_collapse_unsorted(input_data, btn_class=None):
+    input_data = [_handle_generic_data(item) for item in input_data]
+    if input_data:
+        collapse_id = random_collapse_id()
+        first_item = input_data.pop(0)
+        return render_template(
+            'generic_view/collapsed_list.html',
+            first_item=first_item,
+            collapse_id=collapse_id,
+            input_data=input_data,
+            btn_class=btn_class,
+        )
+    return ''
+
+
 def _handle_generic_data(input_data):
     if isinstance(input_data, dict):
         return nice_dict(input_data)

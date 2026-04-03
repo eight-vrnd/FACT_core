@@ -3,28 +3,14 @@
 {% for feature in result['plugins'][plugin] | sort %}
     <tr>
         <td>{{ feature | replace_underscore }}</td>
-
-        {# --- all case --- #}
-        {% if 'all' in result['plugins'][plugin][feature] %}
-            {% if result['plugins'][plugin][feature]['collapse'] %}
-                <td colspan="{{ uid_list | length }}">
-                    {{ result['plugins'][plugin][feature]['all'] | list_group_collapse('success') | uids_to_link | replace_uid_with_file_name | safe  }}
-                </td>
-            {% else %}
-                {{ result['plugins'][plugin][feature]['all'] | list_group | uids_to_link | replace_uid_with_file_name | safe  }}
-            {% endif %}
-
-        {# --- individual results --- #}
-        {% else %}
             {% for uid in uid_list %}
                 <td>
-                {% if result['plugins'][plugin][feature]['collapse'] %}
-                    {{ result['plugins'][plugin][feature][uid] | list_group_collapse('warning') | uids_to_link(root_uid=uid) | replace_uid_with_file_name | safe }}
+                {% if result['plugins'][plugin][feature]['collapse'] == 'True'%}
+                    {{ result['plugins'][plugin][feature][uid] | list_group_collapse_unsorted('warning') | uids_to_link(root_uid=uid) | replace_uid_with_file_name | safe }}
                 {% else %}
                     {{ result['plugins'][plugin][feature][uid] | list_group | uids_to_link(root_uid=uid) | replace_uid_with_file_name | safe }}
                 {% endif %}
                 </td>
             {% endfor %}
-        {% endif %}
     </tr>
 {% endfor %}
