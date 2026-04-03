@@ -26,7 +26,7 @@ class ComparePlugin(CompareBasePlugin):
 
     NAME = 'file_config'
     DEPENDENCIES = ['file_type']
-    VERSION = '0.0.4'
+    VERSION = '0.1.0'
     FILE = __file__
 
     def compare_function(self, fo_list, dependency_results: dict[str, dict]) -> dict[str, dict]:
@@ -36,9 +36,6 @@ class ComparePlugin(CompareBasePlugin):
         config_files = self._filter_config_files(file_objects)
         parsed_config_parameters = self._parse_config_from_fo_list(config_files)
                 
-        print('################## PARAMETERS ###############')
-        pprint(parsed_config_parameters)
-        
         results = {}
         for file_object in config_files: # file_object is a config file
             for root_uid, vfp in file_object.virtual_file_path.items(): # get vfps for all roots
@@ -67,10 +64,6 @@ class ComparePlugin(CompareBasePlugin):
                 results[local_file_path][firmware_root_uid] = [f"{file_object.uid}"] 
                 # add config_parameters_str_list
                 results[local_file_path][firmware_root_uid].extend(config_parameters_str_list)
-                
-
-        print('################## RESULT ###############')
-        pprint(results)
 
         return results
         
@@ -100,14 +93,12 @@ class ComparePlugin(CompareBasePlugin):
         """
         uid_with_contents = {}
         
-        print("########### CONFIG FILE TYPE ###########")
         for fo in fo_list:
         
             if not fo.binary:
                 binary, _ = self.binary_service.get_binary_and_file_name(fo.uid)
                 # Check which config type the file is
                 config_file_type = self._determine_config_type(fo, binary)
-                print(f"Detected {config_file_type} for {fo.file_name} / {fo.uid}")
                 uid_with_contents[fo.uid] = self._parse_config_from_binary(binary, filetype=config_file_type)
             else:
                 config_file_type = self._determine_config_type(fo)
@@ -298,7 +289,8 @@ class ComparePlugin(CompareBasePlugin):
                 break
             
         # Check for common script file syntax that may indicate a script
-        common_script_syntax = ['def ', 'function ', '#include ', 'import ', '{', '}', 'public ', 'private ', 'class ', 'console.log', 'printf(', 'System.out.println', 'echo ']
+        # Note: MIME blacklist filters out most scripts
+        common_script_syntax = ['def ', 'function ', '#include ', '{', '}', 'public ', 'private ', 'class ']
         if any(syntax in line for line in first_lines for syntax in common_script_syntax):
             return False
         
