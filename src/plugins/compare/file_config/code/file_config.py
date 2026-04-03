@@ -57,14 +57,24 @@ class ComparePlugin(CompareBasePlugin):
                     results[local_file_path] = {'collapse': 'True'}
                     
                 if file_object.uid in parsed_config_parameters:
-                    config_parameters_str_list = [f"{key}: {value}" for key, value in parsed_config_parameters[file_object.uid].items()]
+                    config_parameters_str_list = [f"{self._to_safe_str(key)}: {self._to_safe_str(value)}" for key, value in parsed_config_parameters[file_object.uid].items()]
                 else:
                     config_parameters_str_list = []
                 # first line/entry is the file uid as this will be clickable in the UI
                 results[local_file_path][firmware_root_uid] = [f"{file_object.uid}"] 
                 # add config_parameters_str_list
                 results[local_file_path][firmware_root_uid].extend(config_parameters_str_list)
-
+                
+        # if all config files for one local file path contain no parsed parameters, collapse=False
+        for local_file_path in results.keys():
+            total_parameters = 0
+            for firmware_root_uid in results[local_file_path].keys():
+                if firmware_root_uid == 'collapse': # don't count collapse key
+                    continue
+                total_parameters += len(results[local_file_path][firmware_root_uid]) - 1 # subtract 1 to not count the file uid entry
+            if total_parameters == 0:
+                results[local_file_path]['collapse'] = 'False'
+        
         return results
         
     def _to_safe_str(self, s: str) -> str:
@@ -76,7 +86,7 @@ class ComparePlugin(CompareBasePlugin):
         Returns:
             str: Safe string that can be displayed in the view without causing encoding issues
         """
-        return s #FIXME
+        return s.encode('utf-8', errors='ignore').decode('utf-8', errors='ignore')
         
     def _parse_config_from_fo_list(self, fo_list: list[FileObject]) -> dict[str, dict[str, str]]:
         """Parse config parameters from a list of file objects and return a dict of file object uid to dict of key value strings
@@ -99,9 +109,11 @@ class ComparePlugin(CompareBasePlugin):
                 binary, _ = self.binary_service.get_binary_and_file_name(fo.uid)
                 # Check which config type the file is
                 config_file_type = self._determine_config_type(fo, binary)
+                print(f"Parsing --> FO: {fo.file_name} UID: {fo.uid} TYPE: {config_file_type}")
                 uid_with_contents[fo.uid] = self._parse_config_from_binary(binary, filetype=config_file_type)
             else:
                 config_file_type = self._determine_config_type(fo)
+                print(f"Parsing --> FO: {fo.file_name} UID: {fo.uid} TYPE: {config_file_type}")
                 uid_with_contents[fo.uid] = self._parse_config_from_binary(fo.binary, filetype=config_file_type)
         
         return uid_with_contents
@@ -114,7 +126,7 @@ class ComparePlugin(CompareBasePlugin):
             binary (bytes): optional if fo has no binary set
 
         Returns:
-            str | None: Config file type. Options: 'toml', 'xml', 'dualkey', or None if type cannot be determined
+            str | None: Config file type. Options: 'toml', 'xml', 'dualkey', 'csv or None if type cannot be determined
         """
         # Check file extension first
         if fo.file_name.endswith('.toml'):
@@ -140,12 +152,11 @@ class ComparePlugin(CompareBasePlugin):
         else:
             file_content_ascii = fo.binary.decode('ascii', errors='ignore')
         if re.search(r'<\s*[^>]+>', file_content_ascii): # crude regex to check for presence of <tags> which may indicate an xml file
-            return 'xml'
+            # check for closing tags as well to reduce false positives
+            if re.search(r'<\s*/\s*[^>]+>', file_content_ascii):
+                return 'xml'
         elif re.search(r'^\s*\[.*\]\s*$', file_content_ascii, re.MULTILINE): # crude regex to check for presence of [headers] which may indicate a toml file
             return 'toml'
-        # csv
-        elif re.search(r'^[^#;\s]+?,[^#;\s]+', file_content_ascii, re.MULTILINE): # crude regex to check for presence of key,value pairs separated by a comma which may indicate a csv file
-            return 'csv'
         
         # Dual key
         # Check for lines which match "key1 key2 value" or "key1 key2=value" pattern which may indicate a dual key config file
@@ -235,27 +246,37 @@ class ComparePlugin(CompareBasePlugin):
         file_objects = self.database.get_objects_by_uid_list(uid_list)
         return file_objects
 
-    def _is_config_file(self, fo: FileObject) -> bool:
+    def _is_config_file(self, fo: FileObject) -> bool:        
+        # Check MIME type and filter out application and other non-parsable file types
+        mime_whitelist = ['text/x-ini', 'text/csv', 'application/toml', 'application/xml', ' application/json', 'text/xml']
+        mime_blacklist_startswith = ['application/','image/', 'audio/', 'video/', 'font/']
+        mime_blacklist = ['text/css', 'text/html', 'text/javascript','inode/symlink', 'text/x-shellscript', 'text/x-python', 'text/x-c', 'text/x-c++']
+        full_blacklist = ['certificate', 'archive', 'compressed', 'executable', 'shared object', 'dll', 'library', 'object file']
+        # results e.g.
+        # {
+        #     "full": "ELF 64-bit LSB pie executable, ARM aarch64, version 1 (SYSV), dynamically linked, interpreter /lib/ld-musl-aarch64.so.1, no section header",
+        #     "mime": "application/x-pie-executable"
+        # }
+        
+        if 'file_type' in fo.processed_analysis:
+            mime = fo.processed_analysis['file_type']['result']['mime']
+            if mime in mime_whitelist:
+                if mime == 'text/plain':
+                    full = fo.processed_analysis['file_type']['result']['full']
+                    if any(keyword in full for keyword in full_blacklist):
+                        return False
+                else:
+                    return True
+            elif any(mime.startswith(prefix) for prefix in mime_blacklist_startswith) or mime in mime_blacklist:
+                return False
+            
         # File extension
         extension_whitelist = ['config', 'conf', 'cfg', 'ini', 'toml', 'yaml', 'yml', 'xml']
-        extension_blacklist = ['exe', 'dll', 'bin', 'so', 'dylib', 'elf', 'py', 'js', 'c', 'cpp', 'h', 'sh', 'bat']
+        extension_blacklist = ['exe', 'dll', 'bin', 'so', 'dylib', 'elf', 'py', 'js', 'c', 'cpp', 'h', 'sh', 'bat', 'html', 'css', 'jar', 'zip', 'rar', '7z', 'gz', 'tar']
         if any(fo.file_name.endswith(ext) for ext in extension_whitelist):
             return True
         elif any(fo.file_name.endswith(ext) for ext in extension_blacklist):
             return False
-        
-        # Check MIME type and filter out application/* file types
-        # Whitelist is checked before blacklist!
-        mime_whitelist_startswith = []
-        mime_whitelist = ['text/plain', 'text/x-ini', 'text/csv', 'application/toml', 'application/xml', ' application/json', 'text/xml', 'application/xml']
-        mime_blacklist_startswith = ['application/','image/', 'audio/', 'video/', 'font/']
-        mime_blacklist = ['text/css', 'text/html', 'text/javascript']
-        if 'file_type' in fo.processed_analysis and 'mime' in fo.processed_analysis['file_type']:
-            mime = fo.processed_analysis['file_type']['mime']
-            if any(mime.startswith(prefix) for prefix in mime_whitelist_startswith) or mime in mime_whitelist:
-                return True
-            elif any(mime.startswith(prefix) for prefix in mime_blacklist_startswith) or mime in mime_blacklist:
-                return False
         
         # Ensure binary 
         if fo.binary is None and fo.file_path is not None:
@@ -263,15 +284,18 @@ class ComparePlugin(CompareBasePlugin):
         elif fo.file_path is None:
             return False # no file contents to analyze
 
-        # Get file content as ascii string
+        # Get file content as string
         file_content_binary = fo.binary
         try:
-            file_content_ascii = file_content_binary.decode('ascii', errors='ignore')
+            if 'UTF-8' in fo.analysis_results['file_type']['result']['full']:
+                file_content_decoded = file_content_binary.decode('utf-8', errors='ignore')
+            else:
+                file_content_decoded = file_content_binary.decode('ascii', errors='ignore')
         except:
             return False
 
         # Empty file handling
-        if file_content_ascii.strip() == '':
+        if file_content_decoded.strip() == '':
             return False
 
         # Comment indicator characters for ignored lines
@@ -280,7 +304,7 @@ class ComparePlugin(CompareBasePlugin):
         # Prevent script files (e.g. python or C programming snippets) from being identified as a false positive
         # get first 10 lines excluding comment lines
         first_lines = []
-        for line in file_content_ascii.splitlines():
+        for line in file_content_decoded.splitlines():
             line = line.strip() # Remove leading/trailing whitespace
             if not line or any(line.startswith(char) for char in comment_indicator_characters):
                 continue
@@ -296,7 +320,7 @@ class ComparePlugin(CompareBasePlugin):
         
         # Parse key/value
         valid_key_value_pattern = re.compile(r'^[^#;\s]+?\s*[:=]\s*.+$')
-        for line in file_content_ascii.splitlines():
+        for line in file_content_decoded.splitlines():
             line = line.strip() # Remove leading/trailing whitespace
             if not line or any(line.startswith(char) for char in comment_indicator_characters):
                 continue
@@ -305,7 +329,7 @@ class ComparePlugin(CompareBasePlugin):
 
         # Parse dual key/value (e.g. "key1 key2 value")
         valid_key_value_pattern_no_first_word = re.compile(r'^[^\s]+?\s+[^#;\s]+?\s+.+$')
-        for line in file_content_ascii.splitlines():
+        for line in file_content_decoded.splitlines():
             line = line.strip() # Remove leading/trailing whitespace
             if not line or any(line.startswith(char) for char in comment_indicator_characters):
                 continue
@@ -320,11 +344,12 @@ class ComparePlugin(CompareBasePlugin):
 
         Args:
             binary_data (bytes): Binary data
-            filetype (str | None): Optional file type to use for parsing strategy. Options: 'toml', 'xml', 'dualkey'
+            filetype (str | None): Optional file type to use for parsing strategy. Options: 'toml', 'xml', 'dualkey', 'csv', 'yaml' None for default parsing strategy
 
         Returns:
             dict: Dict of key value strings
         """
+        
         # Empty file handling
         if binary_data == b'':
             return {}
@@ -344,6 +369,10 @@ class ComparePlugin(CompareBasePlugin):
             return self._parse_helper_xml(binary_data)
         elif filetype == 'dualkey':
             return self._parse_helper_dualkey(binary_data)
+        elif filetype == 'csv':
+            return self._parse_helper_csv(binary_data)
+        elif filetype == 'yaml':
+            return self._parse_helper_yaml(binary_data)
         else:
             return self._parse_helper_default(binary_data)
 
@@ -372,7 +401,41 @@ class ComparePlugin(CompareBasePlugin):
             return config_dict
         except Exception as e:
             print(f"Error parsing xml file: {e}")
-            return {}
+            print(f"Attempting rugged xml parsing strategy...")
+            return self._parse_helper_xml_rugged(binary_data)
+        
+    def _parse_helper_xml_rugged(self, binary_data: bytes) -> dict:
+        """Fallback xml parsing for invalid xmls using regex instead of xml library
+
+        Args:
+            binary_data (bytes): Binary data of the xml file
+
+        Returns:
+            dict: Dict of key value strings
+        """
+        config_dict = {}
+        parent_keys = []
+        for line in binary_data.decode('ascii', errors='ignore').splitlines():
+            line = line.strip() # Remove leading/trailing whitespace
+            if not line:
+                continue
+            # check for opening tags and closing tags
+            opening_tag_match = re.match(r'^<(\w+)>$', line)
+            closing_tag_match = re.match(r'^</(\w+)>$', line)
+            if opening_tag_match:
+                parent_keys.append(opening_tag_match.group(1))
+            elif closing_tag_match:
+                if parent_keys and parent_keys[-1] == closing_tag_match.group(1):
+                    parent_keys.pop()
+            else:
+                # check for key value pairs in the form of <key>value</key> on the same line
+                inline_tag_match = re.match(r'^<(\w+)>(.*?)</\1>$', line)
+                if inline_tag_match:
+                    key = ' '.join(parent_keys + [inline_tag_match.group(1)])
+                    value = inline_tag_match.group(2).strip()
+                    config_dict[key] = value
+        print(f"Got {len(config_dict)} key value pairs from rugged xml parsing strategy")
+        return config_dict
 
     def _parse_helper_toml(self, binary_data: bytes) -> dict:
         """Parse a toml config file from binary data and return a dict of key value strings
@@ -401,8 +464,42 @@ class ComparePlugin(CompareBasePlugin):
             flattened_toml_str_values = {k: str(v) for k, v in flattened_toml.items()}
             return flattened_toml_str_values
         except Exception as e:
-            print(f"Error parsing toml file: {e}")
-            return {}
+            print(f"Error parsing toml file using toml library: {e}")
+            print(f"Attempting custom rugged toml parsing strategy...")
+            return self._parse_helper_toml_rugged(binary_data)
+    
+    def _parse_helper_toml_rugged(self, binary_data: bytes) -> dict:
+        """Fallback toml parsing for invalid tomls e.g. du to no = sign after key (e.g. for lines like key values instead of key=value)
+
+        Args:
+            binary_data (bytes): Binary data of the toml file
+
+        Returns:
+            dict: Dict of key value strings
+        """
+        config_dict = {}
+        current_parent_keys = []
+        for line in binary_data.decode('ascii', errors='ignore').splitlines():
+            line = line.strip() # Remove leading/trailing whitespace
+            if not line or line.startswith('#'):
+                continue
+            if re.match(r'^\s*\[.*\]\s*$', line): # section header
+                section_name = line.strip('[]').strip()
+                current_parent_keys = section_name.split('.')
+            elif re.match(r'^[^\s]+?\s*[:=]?\s*.+$', line): # key value pair with optional = or : separator
+                if '=' in line:
+                    key, value = line.split('=', 1)
+                elif ':' in line:
+                    key, value = line.split(':', 1)
+                else:
+                    parts = line.split()
+                    key, value = parts[0], ' '.join(parts[1:])
+                key = key.strip()
+                value = value.strip()
+                composite_key = ' '.join(current_parent_keys + [key]) if current_parent_keys else key
+                config_dict[composite_key] = value
+        print(f"Got {len(config_dict)} key value pairs from rugged toml parsing strategy")
+        return config_dict
 
     def _parse_helper_default(self, binary_data: bytes) -> dict:
         """Parse a config file from binary data using the default parsing strategy and return a dict of key value strings
