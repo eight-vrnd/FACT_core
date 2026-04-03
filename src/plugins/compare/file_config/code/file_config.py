@@ -135,17 +135,21 @@ class ComparePlugin(CompareBasePlugin):
             return 'xml'
         elif fo.file_name.endswith('.csv'): 
             return 'csv'
+        elif fo.file_name.endswith('.yaml') or fo.file_name.endswith('.yml'):
+            return 'yaml'
         
         # Check file type analysis results for indicators of config file type (e.g. "application/toml" mime type or "xml" in file type strings)
         # file_type ends in xml or csv or toml? set type based on that
-        if 'file_type' in fo.processed_analysis and 'mime' in fo.processed_analysis['file_type']:
-            mime = fo.processed_analysis['file_type']['mime']
+        if 'file_type' in fo.processed_analysis:
+            mime = fo.processed_analysis['file_type']['result']['mime']
             if mime.endswith('toml'):
                 return 'toml'
             elif mime.endswith('xml'):
                 return 'xml'
             elif mime.endswith('csv'):
                 return 'csv'
+            elif mime.endswith('yaml') or mime.endswith('yml'):
+                return 'yaml'
             
         if binary is not None:
             file_content_ascii = binary.decode('ascii', errors='ignore')
@@ -248,7 +252,7 @@ class ComparePlugin(CompareBasePlugin):
 
     def _is_config_file(self, fo: FileObject) -> bool:        
         # Check MIME type and filter out application and other non-parsable file types
-        mime_whitelist = ['text/x-ini', 'text/csv', 'application/toml', 'application/xml', ' application/json', 'text/xml']
+        mime_whitelist = ['text/x-ini', 'text/csv', 'application/toml', 'application/xml', ' application/json']
         mime_blacklist_startswith = ['application/','image/', 'audio/', 'video/', 'font/']
         mime_blacklist = ['text/css', 'text/html', 'text/javascript','inode/symlink', 'text/x-shellscript', 'text/x-python', 'text/x-c', 'text/x-c++']
         full_blacklist = ['certificate', 'archive', 'compressed', 'executable', 'shared object', 'dll', 'library', 'object file']
@@ -273,9 +277,9 @@ class ComparePlugin(CompareBasePlugin):
         # File extension
         extension_whitelist = ['config', 'conf', 'cfg', 'ini', 'toml', 'yaml', 'yml', 'xml']
         extension_blacklist = ['exe', 'dll', 'bin', 'so', 'dylib', 'elf', 'py', 'js', 'c', 'cpp', 'h', 'sh', 'bat', 'html', 'css', 'jar', 'zip', 'rar', '7z', 'gz', 'tar']
-        if any(fo.file_name.endswith(ext) for ext in extension_whitelist):
+        if any(fo.file_name.endswith(f'.{ext}') for ext in extension_whitelist):
             return True
-        elif any(fo.file_name.endswith(ext) for ext in extension_blacklist):
+        elif any(fo.file_name.endswith(f'.{ext}') for ext in extension_blacklist):
             return False
         
         # Ensure binary 
