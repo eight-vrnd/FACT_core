@@ -5,8 +5,6 @@ from typing import TYPE_CHECKING
 from xml.etree import ElementTree as ET
 
 import toml
-from pprint import pprint
-
 from compare.PluginBase import CompareBasePlugin
 from storage.binary_service import BinaryService
 
@@ -109,11 +107,9 @@ class ComparePlugin(CompareBasePlugin):
                 binary, _ = self.binary_service.get_binary_and_file_name(fo.uid)
                 # Check which config type the file is
                 config_file_type = self._determine_config_type(fo, binary)
-                print(f"Parsing --> FO: {fo.file_name} UID: {fo.uid} TYPE: {config_file_type}")
                 uid_with_contents[fo.uid] = self._parse_config_from_binary(binary, filetype=config_file_type)
             else:
                 config_file_type = self._determine_config_type(fo)
-                print(f"Parsing --> FO: {fo.file_name} UID: {fo.uid} TYPE: {config_file_type}")
                 uid_with_contents[fo.uid] = self._parse_config_from_binary(fo.binary, filetype=config_file_type)
         
         return uid_with_contents
@@ -137,6 +133,8 @@ class ComparePlugin(CompareBasePlugin):
             return 'csv'
         elif fo.file_name.endswith('.yaml') or fo.file_name.endswith('.yml'):
             return 'yaml'
+        elif fo.file_name.endswith('.json'):
+            return 'json'
         
         # Check file type analysis results for indicators of config file type (e.g. "application/toml" mime type or "xml" in file type strings)
         # file_type ends in xml or csv or toml? set type based on that
@@ -252,10 +250,12 @@ class ComparePlugin(CompareBasePlugin):
 
     def _is_config_file(self, fo: FileObject) -> bool:        
         # Check MIME type and filter out application and other non-parsable file types
-        mime_whitelist = ['text/x-ini', 'text/csv', 'application/toml', 'application/xml', ' application/json']
+        mime_whitelist = ['text/x-ini', 'text/csv', 'application/toml', 'application/xml', 'application/json']
+        
         mime_blacklist_startswith = ['application/','image/', 'audio/', 'video/', 'font/']
         mime_blacklist = ['text/css', 'text/html', 'text/javascript','inode/symlink', 'text/x-shellscript', 'text/x-python', 'text/x-c', 'text/x-c++']
         full_blacklist = ['certificate', 'archive', 'compressed', 'executable', 'shared object', 'dll', 'library', 'object file']
+        
         # results e.g.
         # {
         #     "full": "ELF 64-bit LSB pie executable, ARM aarch64, version 1 (SYSV), dynamically linked, interpreter /lib/ld-musl-aarch64.so.1, no section header",
@@ -264,13 +264,12 @@ class ComparePlugin(CompareBasePlugin):
         
         if 'file_type' in fo.processed_analysis:
             mime = fo.processed_analysis['file_type']['result']['mime']
+            if mime == 'text/plain':
+                full = fo.processed_analysis['file_type']['result']['full']
+                if any(keyword in full for keyword in full_blacklist):
+                    return False
             if mime in mime_whitelist:
-                if mime == 'text/plain':
-                    full = fo.processed_analysis['file_type']['result']['full']
-                    if any(keyword in full for keyword in full_blacklist):
-                        return False
-                else:
-                    return True
+                return True
             elif any(mime.startswith(prefix) for prefix in mime_blacklist_startswith) or mime in mime_blacklist:
                 return False
             
@@ -291,7 +290,7 @@ class ComparePlugin(CompareBasePlugin):
         # Get file content as string
         file_content_binary = fo.binary
         try:
-            if 'UTF-8' in fo.analysis_results['file_type']['result']['full']:
+            if 'UTF-8' in fo.processed_analysis['file_type']['result']['full']:
                 file_content_decoded = file_content_binary.decode('utf-8', errors='ignore')
             else:
                 file_content_decoded = file_content_binary.decode('ascii', errors='ignore')
@@ -404,8 +403,6 @@ class ComparePlugin(CompareBasePlugin):
             parse_element(root)
             return config_dict
         except Exception as e:
-            print(f"Error parsing xml file: {e}")
-            print(f"Attempting rugged xml parsing strategy...")
             return self._parse_helper_xml_rugged(binary_data)
         
     def _parse_helper_xml_rugged(self, binary_data: bytes) -> dict:
@@ -438,7 +435,6 @@ class ComparePlugin(CompareBasePlugin):
                     key = ' '.join(parent_keys + [inline_tag_match.group(1)])
                     value = inline_tag_match.group(2).strip()
                     config_dict[key] = value
-        print(f"Got {len(config_dict)} key value pairs from rugged xml parsing strategy")
         return config_dict
 
     def _parse_helper_toml(self, binary_data: bytes) -> dict:
@@ -468,8 +464,6 @@ class ComparePlugin(CompareBasePlugin):
             flattened_toml_str_values = {k: str(v) for k, v in flattened_toml.items()}
             return flattened_toml_str_values
         except Exception as e:
-            print(f"Error parsing toml file using toml library: {e}")
-            print(f"Attempting custom rugged toml parsing strategy...")
             return self._parse_helper_toml_rugged(binary_data)
     
     def _parse_helper_toml_rugged(self, binary_data: bytes) -> dict:
@@ -502,7 +496,6 @@ class ComparePlugin(CompareBasePlugin):
                 value = value.strip()
                 composite_key = ' '.join(current_parent_keys + [key]) if current_parent_keys else key
                 config_dict[composite_key] = value
-        print(f"Got {len(config_dict)} key value pairs from rugged toml parsing strategy")
         return config_dict
 
     def _parse_helper_default(self, binary_data: bytes) -> dict:
@@ -571,20 +564,72 @@ class ComparePlugin(CompareBasePlugin):
         Returns:
             dict: Dict of key value strings
         """
-        config_dict = {}
-        for line in binary_data.decode('ascii', errors='ignore').splitlines():
-            line = line.strip() # Remove leading/trailing whitespace
-            if not line:
-                continue
-            parts = line.split(',')
-            if len(parts) >= 2:
-                key = parts[0].strip()
-                value = ','.join(parts[1:]).strip() # In case there are additional commas in the value
-                config_dict[key] = value
-        return config_dict
+        # Detect whether first line is just keys and second line just values or if each line is e.g. key,secondkey,value
+        csv_type = None
+        lines = [line.strip() for line in binary_data.decode('ascii', errors='ignore').splitlines() if line.strip() and not line.strip().startswith('#')]
+        
+        # more than 2 non-comment lines --> assume key,secondkey,value format
+        if len(lines) > 2:
+            csv_type = 'key_value_per_line'
+        elif len(lines) == 1:
+            csv_type = 'key_line_then_value_line'
+            # assume either line of parameter keys that are empty (e.g. no values in second line) or key1,key2,key3,... on first line and value1,value2,value3,... on second line
+            # check if comma count matches between first and second line if second line exists
+        elif len(lines) == 2:
+            comma_count_line_1 = lines[0].count(',')
+            comma_count_line_2 = lines[1].count(',')
+            if comma_count_line_1 == comma_count_line_2:
+                csv_type = 'key_line_then_value_line'
+            else:
+                return {'Error': 'Unable to determine CSV format: number of commas do not match between first and second line'}
+        
+        if csv_type == 'key_value_per_line':
+            # skip comment lines
+            # input e.g.
+            # key1,secondkey1,value1
+            # key2, value2
+            # output e.g. {"key1 secondkey1": "value1", "key2": "value2"}
+            # --> last csv value is the value, everything else is keys
+            config_dict = {}
+            for line in lines:
+                parts = line.split(',')
+                if len(parts) >= 2:
+                    key = ' '.join([part.strip() for part in parts[:-1]])
+                    value = parts[-1].strip()
+                    config_dict[key] = value
+            return config_dict
+        elif csv_type == 'key_line_then_value_line':
+            config_dict = {}
+            if len(lines) == 1:
+                keys = [key.strip() for key in lines[0].split(',')]
+                for key in keys:
+                    config_dict[key] = ''
+                return config_dict
+            else: 
+                keys = [key.strip() for key in lines[0].split(',')]
+                values = [value.strip() for value in lines[1].split(',')]
+                if len(keys) != len(values):
+                    return {'Error': 'Unable to parse csv file: number of keys and values do not match'}
+                for key, value in zip(keys, values):
+                    config_dict[key] = value
+                return config_dict
 
     def _parse_helper_yaml(self, binary_data: bytes) -> dict:
         """Parse a yaml config file from binary data and return a dict of key value strings
+        
+        Combines nested key names with spaces (e.g. {"parentkey childkey": "value"} for parentkey: \n  childkey: value) but does not add key-value pairs for parent keys without values and excludes comment lines and empty lines.
+        
+        e.g. this file
+        ```
+        parent:
+            child1:
+                childchild1: value1
+            child2: value2
+        ```
+        results in
+        ```
+        {"parent child1 childchild1": "value1"}, {"parent child2": "value2"}
+        ```
 
         Args:
             binary_data (bytes): Binary data of the yaml file
@@ -592,27 +637,31 @@ class ComparePlugin(CompareBasePlugin):
         Returns:
             dict: Dict of key value strings
         """
-        # treats nestes keys as a composite key (e.g. "parentkey childkey1 childkey2" for parentkey:\n  childkey1:\n    childkey2: value)
+        
         config_dict = {}
         current_parent_keys = []
         for line in binary_data.decode('ascii', errors='ignore').splitlines():
-            line = line.rstrip() # Remove trailing whitespace but keep leading whitespace for indentation
-            if not line or line.lstrip().startswith(('#', ';')):
+            if not line or line.startswith('#'):
                 continue
-            indent_level = len(line) - len(line.lstrip())
-            key_value_part = line.lstrip()
-            if ':' in key_value_part:
-                key, value = key_value_part.split(':', 1)
-                key = key.strip()
-                value = value.strip()
-                # Update current parent keys based on indentation level
-                while current_parent_keys and current_parent_keys[-1][1] >= indent_level:
-                    current_parent_keys.pop()
-                current_parent_keys.append((key, indent_level))
-                composite_key = ' '.join(k for k, _ in current_parent_keys)
-                config_dict[composite_key] = value
+            indent_level = len(line) - len(line.lstrip(' '))
+            key_value_match = re.match(r'^([^:]+):\s*(.*)$', line)
+            if key_value_match:
+                is_parent = True if key_value_match.group(2) == '' else False
+                if is_parent:
+                    key = key_value_match.group(1).strip()
+                    while current_parent_keys and current_parent_keys[-1][1] >= indent_level:
+                        current_parent_keys.pop()
+                    current_parent_keys.append((key, indent_level))
+                else:
+                    key, value = key_value_match.group(1).strip(), key_value_match.group(2).strip()
+                    while current_parent_keys and current_parent_keys[-1][1] >= indent_level:
+                        current_parent_keys.pop()
+                    composite_key = ' '.join([k for k, _ in current_parent_keys] + [key]) if current_parent_keys else key
+                    config_dict[composite_key] = value
+                    current_parent_keys.append((key, indent_level))
         return config_dict
-    
+        
+
     def _parse_helper_list(self, binary_data: bytes) -> dict:
         """Parse a config file from binary data that does not contain key value pairs but rather a list of values (e.g. for config files that just contain a list of enabled features or filepaths) and return a dict with the list of values under a generic "list" key
 
@@ -623,3 +672,33 @@ class ComparePlugin(CompareBasePlugin):
             dict: Dict of key value strings
         """
         raise NotImplementedError()
+
+    def _parse_helper_json(self, binary_data: bytes) -> dict:
+        """Parse a json config file from binary data and return a dict of key value strings using default library json
+
+        Args:
+            binary_data (bytes): Binary data of the json file
+
+        Returns:
+            dict: Dict of key value strings
+        """
+        import json
+        try:
+            file_content_ascii = binary_data.decode('ascii', errors='ignore')
+            parsed_json = json.loads(file_content_ascii)
+            # flatten nested dicts by concatenating keys with a space (e.g. {'network': {'port': 8080}} becomes {'network port': 8080})
+            # convert all values to strings for consistency with other parsing methods
+            # this implementation keeps order of keys as they appear in the file
+            def flatten_dict(d, parent_key=''):
+                items = {}
+                for k, v in d.items():
+                    new_key = f"{parent_key} {k}".strip() if parent_key else k
+                    if isinstance(v, dict):
+                        items.update(flatten_dict(v, new_key))
+                    else:
+                        items[new_key] = str(v)
+                return items
+            flattened_json = flatten_dict(parsed_json)
+            return flattened_json
+        except Exception as e:
+            return {'Error': 'Unable to parse json file'}

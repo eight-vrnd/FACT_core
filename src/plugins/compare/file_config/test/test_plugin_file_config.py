@@ -238,28 +238,48 @@ class TestComparePluginFileConfig(ComparePluginTest):
         # Create file objects with different extensions and file type analysis results to test config type determination
         fo_dualkey = create_test_file_object(bin_path='firmware1/config/example.config')
         fo_dualkey.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.config')
-        fo_dualkey.processed_analysis['file_type'] = {'mime': 'text/plain'}
+        fo_dualkey.processed_analysis['file_type']['result'] = {'mime': 'text/plain', 'full': 'ASCII text with dual key value pairs'}
         
         fo_dualkey_b = create_test_file_object(bin_path='firmware1/config/example.b.config')
         fo_dualkey_b.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.b.config')
-        fo_dualkey_b.processed_analysis['file_type'] = {'mime': 'text/plain'}
+        fo_dualkey_b.processed_analysis['file_type']['result'] = {'mime': 'text/plain', 'full': 'ASCII text with dual key value pairs'}
+        
+        fo_dualkey_c = create_test_file_object(bin_path='firmware1/config/examplecdualkey')
+        fo_dualkey_c.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/examplecdualkey')
+        fo_dualkey_c.processed_analysis['file_type']['result'] = {'mime': 'text/plain', 'full': 'ASCII text with dual key value pairs'}
         
         fo_xml = create_test_file_object(bin_path='firmware1/config/example.xml')
         fo_xml.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.xml')
-        fo_xml.processed_analysis['file_type'] = {'mime': 'text/plain'}
+        fo_xml.processed_analysis['file_type']['result'] = {'mime': 'text/plain', 'full': 'ASCII text with XML markup'}
         
         fo_toml = create_test_file_object(bin_path='firmware1/config/example.toml')
         fo_toml.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.toml')
-        fo_toml.processed_analysis['file_type'] = {'mime': 'text/plain'}
+        fo_toml.processed_analysis['file_type']['result'] = {'mime': 'text/plain', 'full': 'ASCII text'}
         
         fo_general_config = create_test_file_object(bin_path='firmware1/config/example')
         fo_general_config.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example')
-        fo_general_config.processed_analysis['file_type'] = {'mime': 'text/plain'}
+        fo_general_config.processed_analysis['file_type']['result'] = {'mime': 'text/plain', 'full': 'ASCII text'}
         
-            # false positives
+        fo_json = create_test_file_object(bin_path='firmware1/config/example.json')
+        fo_json.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.json')
+        fo_json.processed_analysis['file_type']['result'] = {'mime': 'application/json', 'full': 'JSON'}
+        
+        fo_yaml = create_test_file_object(bin_path='firmware1/config/example.yaml')
+        fo_yaml.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.yaml')
+        fo_yaml.processed_analysis['file_type']['result'] = {'mime': 'text/plain', 'full': 'YAML'}
+        
+        fo_csv = create_test_file_object(bin_path='firmware1/config/example.csv')
+        fo_csv.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.csv')
+        fo_csv.processed_analysis['file_type']['result'] = {'mime': 'text/csv', 'full': 'CSV'}
+        
+        # false positives
         fo_js = create_test_file_object(bin_path='firmware1/config/example.js')
         fo_js.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.js')
-        fo_js.processed_analysis['file_type'] = {'mime': 'application/javascript'}
+        fo_js.processed_analysis['file_type']['result'] = {'mime': 'application/javascript', 'full': 'ASCII text'}
+        
+        fo_js_text_plain = create_test_file_object(bin_path='firmware1/config/example.js')
+        fo_js_text_plain.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.js')
+        fo_js_text_plain.processed_analysis['file_type']['result'] = {'mime': 'text/plain', 'full': 'js library'}
         
         # is config file?
         assert self.c_plugin._is_config_file(fo_dualkey) == True, 'Should identify .config file as config file'
@@ -267,15 +287,25 @@ class TestComparePluginFileConfig(ComparePluginTest):
         assert self.c_plugin._is_config_file(fo_xml) == True, 'Should identify .xml file as config file'
         assert self.c_plugin._is_config_file(fo_toml) == True, 'Should identify .toml file as config file'
         assert self.c_plugin._is_config_file(fo_general_config) == True, 'Should identify file with no extension as config file'
+        assert self.c_plugin._is_config_file(fo_json) == True, 'Should identify application/json file as config file'
+        assert self.c_plugin._is_config_file(fo_yaml) == True, 'Should identify application/x-yaml file as config file'
+        assert self.c_plugin._is_config_file(fo_csv) == True, 'Should identify text/csv file as config file'
+        assert self.c_plugin._is_config_file(fo_dualkey_c) == True, 'Should identify file with dualkey content as config file'
+        
         assert self.c_plugin._is_config_file(fo_js) == False, 'Should not identify application/javascript file as config file' 
+        assert self.c_plugin._is_config_file(fo_js_text_plain) == False, 'Should not identify text/plain js library file as config file'
+        
     
         # what type?
         assert self.c_plugin._determine_config_type(fo_dualkey) == 'dualkey', 'Config type should be dualkey for .config files with dual key content'
         assert self.c_plugin._determine_config_type(fo_dualkey_b) == 'dualkey', 'Config type should be dualkey for .b.config files with dual key content'
+        assert self.c_plugin._determine_config_type(fo_dualkey_c) == 'dualkey', 'Config type should be dualkey for files with dual key content even without config extension'
         assert self.c_plugin._determine_config_type(fo_xml) == 'xml', 'Config type should be xml for .xml files'
         assert self.c_plugin._determine_config_type(fo_toml) == 'toml', 'Config type should be toml for .toml files'
         assert self.c_plugin._determine_config_type(fo_general_config) == None, 'Config type should be None for unknown file types'
-        assert self.c_plugin._determine_config_type(fo_js) == None, 'Config type should be None for application/javascript files'
+        assert self.c_plugin._determine_config_type(fo_json) == 'json', 'Config type should be json for application/json files'
+        assert self.c_plugin._determine_config_type(fo_yaml) == 'yaml', 'Config type should be yaml for application/x-yaml files'
+        assert self.c_plugin._determine_config_type(fo_csv) == 'csv', 'Config type should be csv for text/csv files'
     
     def test_parse_config_from_binary_empty_file(self):
         # Empty file should return empty dict
@@ -283,6 +313,16 @@ class TestComparePluginFileConfig(ComparePluginTest):
         expected_output = {}
         output = self.c_plugin._parse_config_from_binary(example_content)
         assert output == expected_output, f'Unexpected output for empty file'
+        
+    def test_get_included_uids(self):
+        fo_list = [self.fw_one, self.fw_two, self.fw_three]
+        included_uids = self.c_plugin._get_included_uids(fo_list)
+        expected_uids = set(self.fw_one.list_of_all_included_files + self.fw_two.list_of_all_included_files + self.fw_three.list_of_all_included_files)
+        assert set(included_uids) == expected_uids, 'Included UIDs do not match expected UIDs'
+        
+        # empty set
+        included_uids = self.c_plugin._get_included_uids([])
+        assert included_uids == [], 'Included UIDs should be empty list for empty input'
         
     def test_parse_config_from_binary(self):
         # Example config content
@@ -395,6 +435,19 @@ class TestComparePluginFileConfig(ComparePluginTest):
         output = self.c_plugin._parse_helper_toml(example_content)
         assert output == expected_output, f'Unexpected output'
         
+        # rugged parsing - missing equals signs
+        example_content_rugged = b"""
+        [network]
+        ports 8080 8081 8082
+        bind 0.0.0.0
+        """
+        expected_output_rugged = {
+            'network ports': '8080 8081 8082',
+            'network bind': '0.0.0.0'
+        }
+        output = self.c_plugin._parse_helper_toml_rugged(example_content_rugged)
+        assert output == expected_output_rugged, f'Unexpected output'
+        
     def test_parse_helper_xml(self):
         # Example xml config content
         example_content = b"""
@@ -417,3 +470,91 @@ class TestComparePluginFileConfig(ComparePluginTest):
         }
         output = self.c_plugin._parse_helper_xml(example_content)
         assert output == expected_output, f'Unexpected output'
+        
+        # Test rugged xml parsing
+        output = self.c_plugin._parse_helper_xml_rugged(example_content)
+        assert output == expected_output, f'Unexpected output'
+    
+    def test_parse_helper_json(self):
+        # Example json config content
+        example_content = b"""
+        {
+            "network": {
+                "port": 8080,
+                "bind": "0.0.0.0"
+            },
+            "database": {
+                "host": "localhost",
+                "port": 3306
+            }
+        }
+        """
+        expected_output = {
+            'network port': '8080',
+            'network bind': '0.0.0.0',
+            'database host': 'localhost',
+            'database port': '3306'
+        }
+        output = self.c_plugin._parse_helper_json(example_content)
+        assert output == expected_output, f'Unexpected output'
+
+    def test_parse_helper_yaml(self):
+        # Example yaml config content
+        example_content = b"""
+        network:
+          port: 8080
+          bind: 0.0.0.0
+        database:
+            host: localhost
+            port: 3306
+        """
+        expected_output = {
+            'network port': '8080',
+            'network bind': '0.0.0.0',
+            'database host': 'localhost',
+            'database port': '3306'
+        }
+        output = self.c_plugin._parse_helper_yaml(example_content)
+        assert output == expected_output, f'Unexpected output'
+
+    def test_parse_helper_csv(self):
+        # Example csv config content
+        example_content = b"""
+        port,bind,protocol,key_then_value_format
+        8080,0.0.0.0,tcp,true
+        """
+        expected_output = {
+            'port': '8080',
+            'bind': '0.0.0.0',
+            'protocol': 'tcp',
+            'key_then_value_format': 'true'
+        }
+        output = self.c_plugin._parse_helper_csv(example_content)
+        assert output == expected_output, f'Unexpected output'
+        
+        # test key,key,value parsing
+        example_content_key_key_value = b"""
+        key,key,value
+        network,port,8080
+        network,bind,0.0.0.0
+        network,protocol,tcp
+        """
+        expected_output_key_key_value = {
+            'key key': 'value',
+            'network port': '8080',
+            'network bind': '0.0.0.0',
+            'network protocol': 'tcp'
+        }
+        output = self.c_plugin._parse_helper_csv(example_content_key_key_value)
+        assert output == expected_output_key_key_value, f'Unexpected output'
+        
+        # broken csv with keys not matching count of values
+        example_content_broken = b"""
+        port,bind,protocol
+        8080,0.0.0.0
+        """
+        expected_output_broken = {
+            'Error': 'Unable to determine CSV format: number of commas do not match between first and second line'
+        }
+        output = self.c_plugin._parse_helper_csv(example_content_broken)
+        assert output == expected_output_broken, f'Unexpected output'

@@ -1,0 +1,5 @@
+# dual key style b
+network port 22
+network servicename ssh
+network bind 0.0.0.0
+network key value # inline comment
