@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <device>
+    <vendor>ExampleCorp</vendor>
+    <model>FW-1000</model>
+    <firmwareVersion>1.0.0</firmwareVersion>
+    <buildDate>2026-01-15</buildDate>
+  </device>
+
+  <network>
+    <hostname>firmware1-device</hostname>
+    <interfaces>
+      <interface name="eth2p1">
+        <enabled>true</enabled>
+        <dhcp>true</dhcp>
+        <mtu>1500</mtu>
+      </interface>
+      <interface name="wlan0">
+        <enabled>false</enabled>
+        <dhcp>false</dhcp>
+        <ipAddress>192.168.10.20</ipAddress>
+        <netmask>255.255.255.0</netmask>
+        <gateway>192.168.10.1</gateway>
+      </interface>
+    </interfaces>
+  </network>
+
+  <services>
+    <ssh enabled="true" port="2222"/>
+    <http enabled="true" port="80"/>
+    <https enabled="false" port="4443"/>
+    <telnet enabled="false" port="24"/>
+  </services>
+
+  <security>
+    <firewall enabled="true">
+      <defaultPolicy>deny</defaultPolicy>
+      <allowedPorts>
+        <port protocol="tcp">22</port>
+        <port protocol="tcp">80</port>
+      </allowedPorts>
+    </firewall>
+    <passwordPolicy>
+      <minLength>12</minLength>
+      <requireUppercase>true</requireUppercase>
+      <requireNumber>true</requireNumber>
+      <requireSpecial>true</requireSpecial>
+    </passwordPolicy>
+  </security>
+
+  <logging>
+    <level>INFO</level>
+    <remoteSyslog enabled="false"/>
+  </logging>
+</configuration>

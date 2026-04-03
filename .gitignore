@@ -40,3 +40,10 @@ start_fact_frontend
 .project
 .settings
 .pydevproject
+
+# Vagrant
+.vagrant/*
+
+# Virtual environments
+venv/*
+.venv/*

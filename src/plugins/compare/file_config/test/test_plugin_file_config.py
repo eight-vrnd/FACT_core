@@ -1,0 +1,560 @@
+import pytest
+import os
+
+from pprint import pprint
+
+from common_helper_files import get_dir_of_file, get_binary_from_file
+from objects.file import FileObject
+from objects.firmware import Firmware
+from plugins.compare.file_config.code.file_config import ComparePlugin
+from test.common_helper import CommonDatabaseMock, create_test_file_object, create_test_firmware
+from test.unit.compare.compare_plugin_test_class import ComparePluginTest
+from helperFunctions.uid import create_uid, is_list_of_uids, is_uid
+
+# IDE specific settings
+# pyright: reportOperatorIssue=false
+# pyright: reportArgumentType=false
+# pyright: reportAttributeAccessIssue=false
+# pyright: reportOptionalMemberAccess=false
+
+# Setting up test firmware objects to allow DbMock class to access file objects
+# Manually add binaries to included file objects due to paths being different from live system
+TEST_DATA_DIR = os.path.join(get_dir_of_file(__file__), 'data')
+
+FW_ONE = create_test_firmware(device_name='dev_1_firmware_1', bin_path='firmware1/firmware1.zip', all_files_included_set=True)
+FO_ONE = create_test_file_object(bin_path='firmware1/config/example.config')
+FO_ONE.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.config')
+FO_ONE.root_uid = FW_ONE.root_uid
+FW_ONE.add_included_file(FO_ONE)
+
+FW_TWO = create_test_firmware(device_name='dev_1_firmware_2', bin_path='firmware2/firmware2.zip', all_files_included_set=True)
+FO_TWO = create_test_file_object(bin_path='firmware2/config/example.config')
+FO_TWO.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware2/config/example.config')
+FO_TWO.root_uid = FW_TWO.root_uid
+FW_TWO.add_included_file(FO_TWO)
+
+FW_THREE = create_test_firmware(device_name='dev_1_firmware_3', bin_path='firmware3/firmware3.zip', all_files_included_set=True)
+FO_THREE = FO_TWO
+FW_THREE.add_included_file(FO_THREE)
+
+FW_FOUR = create_test_firmware(device_name='dev_2_firmware_1', bin_path=f'{TEST_DATA_DIR}/firmware4/firmware_nested_1.zip')
+FW_FOUR.list_of_all_included_files = []
+FW_FOUR_FOLDER = create_test_file_object(bin_path=f'{TEST_DATA_DIR}/firmware4/folder.tar.gz')
+FW_FOUR_FOLDER.depth = 1
+FW_FOUR_FOLDER.root_uid = FW_FOUR.uid
+FW_FOUR_FOLDER.list_of_all_included_files = []
+# create file objects for all files in firmware4/folder/
+FO_FOUR_LIST = []
+FO_FOUR_LIST.append(FW_FOUR_FOLDER)
+for root, dirs, files in os.walk(f'{TEST_DATA_DIR}/firmware4/folder'):
+    for file in files:
+        file_path = os.path.join(root, file)
+        fo = create_test_file_object(bin_path=f'{TEST_DATA_DIR}/firmware4/folder/{file}')
+        fo.virtual_file_path = {f'{FW_FOUR_FOLDER.uid}': [f'/{file}']}
+        fo.binary = get_binary_from_file(file_path)
+        FO_FOUR_LIST.append(fo)
+for fo in FO_FOUR_LIST:
+    if fo.uid != FW_FOUR_FOLDER.uid:
+        FW_FOUR_FOLDER.files_included.add(fo)
+        FW_FOUR_FOLDER.list_of_all_included_files.append(fo.uid)
+        fo.root_uid = FW_FOUR_FOLDER.uid
+    FW_FOUR.files_included.add(fo)
+    FW_FOUR.list_of_all_included_files.append(fo.uid)
+    
+FW_FIVE = create_test_firmware(device_name='dev_2_firmware_1', bin_path=f'{TEST_DATA_DIR}/firmware5/firmware_nested_2.zip')
+FW_FIVE.list_of_all_included_files = []
+FW_FIVE_FOLDER = create_test_file_object(bin_path=f'{TEST_DATA_DIR}/firmware5/folder.tar.gz')
+FW_FIVE_FOLDER.depth = 1
+FW_FIVE_FOLDER.root_uid = FW_FIVE.uid
+FW_FIVE_FOLDER.list_of_all_included_files = []
+# create file objects for all files in firmware5/folder/
+FO_FIVE_LIST = []
+FO_FIVE_LIST.append(FW_FIVE_FOLDER)
+for root, dirs, files in os.walk(f'{TEST_DATA_DIR}/firmware5/folder'):
+    for file in files:
+        file_path = os.path.join(root, file)
+        fo = create_test_file_object(bin_path=f'{TEST_DATA_DIR}/firmware5/folder/{file}')
+        fo.virtual_file_path = {f'{FW_FIVE_FOLDER.uid}': [f'/{file}']}
+        fo.binary = get_binary_from_file(file_path)
+        FO_FIVE_LIST.append(fo)
+for fo in FO_FIVE_LIST:
+    if fo.uid != FW_FIVE_FOLDER.uid:
+        FW_FIVE_FOLDER.files_included.add(fo)
+        FW_FIVE_FOLDER.list_of_all_included_files.append(fo.uid)
+        fo.root_uid = FW_FIVE_FOLDER.uid
+    FW_FIVE.files_included.add(fo)
+    FW_FIVE.list_of_all_included_files.append(fo.uid)
+
+print('Test setup done')
+
+
+class DbMock:
+    
+    def get_file_tree_path(self, uid: str) -> list[list[str]]:
+        # Return all vfps as list of uids for a given uid
+        # e.g.:
+        # [['59a9265181ab70ee42523b15cccc109a8d2d53cb45d5af0e99e7487582bf6dcb_1982', 'e8f4b4162c253904840c181551a81624f63a2eda10de902d646b4aae8d8e7b5a_1415', '13e29c8ad0bc971b0c18344c3652936e0c7987f7f9daa30680c9dca2f2a7d37f_14848', '05e2678ee7a4fc17dec9da1d33e74dd30f4065659b116f86ecd6e805820dbefc_1426']]
+        # in our case, return the correct vfp as uids for the uid. for fw 1-3, this is just [[root_uid, file_uid]]. for 4-5, this is [[fw_root_uid, folder_uid, file_uid]]
+        if uid in FW_ONE.list_of_all_included_files:
+            return [[FW_ONE.root_uid, FO_ONE.uid]]
+        elif uid in FW_TWO.list_of_all_included_files:
+            return [[FW_TWO.root_uid, FO_TWO.uid]]
+        elif uid in FW_THREE.list_of_all_included_files:
+            return [[FW_THREE.root_uid, FO_THREE.uid]]
+        elif uid in FW_FOUR.list_of_all_included_files:
+            for fo in FO_FOUR_LIST:
+                if fo.uid == uid:
+                    return [[FW_FOUR.root_uid, FW_FOUR_FOLDER.uid, fo.uid]]
+        elif uid in FW_FIVE.list_of_all_included_files:
+            for fo in FO_FIVE_LIST:
+                if fo.uid == uid:
+                    return [[FW_FIVE.root_uid, FW_FIVE_FOLDER.uid, fo.uid]]
+        
+    def get_objects_by_uid_list(
+        self, uid_list: list[str] | set[str], analysis_filter: list[str] | None = None
+    ) -> list[FileObject]:
+        file_objects = []
+        
+        for uid in uid_list:
+            # Check which test firmware the uid belongs to and return the corresponding file object
+            if uid in FW_ONE.list_of_all_included_files:
+                file_objects.append(FO_ONE)
+            elif uid in FW_TWO.list_of_all_included_files:
+                file_objects.append(FO_TWO)
+            elif uid in FW_THREE.list_of_all_included_files:
+                file_objects.append(FO_THREE)
+            elif uid in FW_FOUR.list_of_all_included_files:
+                # find the file object in FW_FOUR with the matching uid
+                for fo in FO_FOUR_LIST:
+                    if fo.uid == uid:
+                        file_objects.append(fo)
+                        break
+            elif uid in FW_FIVE.list_of_all_included_files:
+                # find the file object in FW_FIVE with the matching uid
+                for fo in FO_FIVE_LIST:
+                    if fo.uid == uid:
+                        file_objects.append(fo)
+                        break
+        
+        return file_objects        
+    
+class TestComparePluginFileConfig(ComparePluginTest):
+    # An initialized plugin instance is available at self.c_plugin
+    PLUGIN_NAME = 'file_config'
+    PLUGIN_CLASS = ComparePlugin
+    
+    def setup_plugin(self):
+        return ComparePlugin(db_interface=DbMock(), view_updater=CommonDatabaseMock())
+    
+    def setup_test_fw(self):
+        """
+        Mockup firmware files with included config files similar to each other for testing of identification, parsing, and comparison
+        """
+        self.fw_one = FW_ONE
+        self.fo_one = FO_ONE
+        self.fw_two = FW_TWO
+        self.fw_three = FW_THREE
+        
+    def test_setup_selfcheck(self):        
+        # Check file and firmware objects
+        assert isinstance(self.fw_one, FileObject), 'fw_one is not a FileObject'
+        assert isinstance(self.fw_two, FileObject), 'fw_two is not a FileObject'
+        assert isinstance(self.fw_three, FileObject), 'fw_three is not a FileObject'
+        assert isinstance(FW_FOUR, FileObject), 'FW_FOUR is not a FileObject'
+        # assert isinstance(FW_FIVE, FileObject), 'FW_FIVE is not a FileObject'
+        assert isinstance(FO_FOUR_LIST[0], FileObject), 'FO_FOUR_LIST[0] is not a FileObject'
+        # assert isinstance(FO_FIVE_LIST[0], FileObject), 'FO_FIVE_LIST[0] is not a FileObject'
+        
+        assert isinstance(self.fw_one, Firmware), 'fw_one is not a Firmware'
+        assert isinstance(self.fw_two, Firmware), 'fw_two is not a Firmware'
+        assert isinstance(self.fw_three, Firmware), 'fw_three is not a Firmware'
+        assert isinstance(FW_FOUR, Firmware), 'FW_FOUR is not a Firmware'
+        # assert isinstance(FW_FIVE, Firmware), 'FW_FIVE is not a Firmware'
+        
+        # Check contents
+        # simple fw
+        assert len(self.fw_one.list_of_all_included_files) == 1, 'fw_one should have 1 included file'
+        assert len(self.fw_two.list_of_all_included_files) == 1, 'fw_two should have 1 included file'
+        assert len(self.fw_three.list_of_all_included_files) == 1, 'fw_three should have 1 included file'
+        # folders
+        assert len(FW_FOUR_FOLDER.list_of_all_included_files) == 6, 'FW_FOUR_FOLDER should have 6 included files'
+        # assert len(FW_FIVE_FOLDER.list_of_all_included_files) == 6, 'FW_FIVE_FOLDER should have 6 included files'
+        # fw objects
+        assert len(FW_FOUR.list_of_all_included_files) == 7, 'FW_FOUR should have 7 included files'
+        # assert len(FW_FIVE.list_of_all_included_files) == 7, 'FW_FIVE should have 7 included files'
+        
+        # Check ROOT UIDS for firmware objects in FW_FOUR and FIVE
+        assert FO_FOUR_LIST[1].root_uid != FW_FOUR.root_uid, 'FO_FOUR_LIST[i].root_uid should not be the same as FW_FOUR root uid'
+        assert FO_FOUR_LIST[1].root_uid == FW_FOUR_FOLDER.uid, 'FO_FOUR_LIST[i].root_uid should be the same as FW_FOUR_FOLDER uid'
+        
+        # Check UIDs
+        assert is_uid(self.fw_one.root_uid), 'fw_one root uid is not a valid uid'
+        assert is_uid(self.fw_one.uid), 'fw_one root uid is not a valid uid'
+        assert is_uid(self.fw_two.root_uid), 'fw_two root uid is not a valid uid'
+        assert is_uid(self.fw_two.uid), 'fw_two uid is not a valid uid'
+        assert is_uid(self.fw_three.root_uid), 'fw_three root uid is not a valid uid'
+        assert is_uid(self.fw_three.uid), 'fw_three uid is not a valid uid'
+        assert is_list_of_uids(self.fw_one.list_of_all_included_files), 'List of included files should be a list of uids'
+        assert is_list_of_uids(self.fw_two.list_of_all_included_files), 'List of included files should be a list of uids'
+        assert is_list_of_uids(self.fw_three.list_of_all_included_files), 'List of included files should be a list of uids'
+    
+    def test_compare_function_components(self):
+        # fo_list is the list of firmware objects to be compares
+        fo_list = [self.fw_one, self.fw_two, self.fw_three]
+        
+        # get all uids
+        included_file_uids = self.c_plugin._get_included_uids(fo_list)
+        
+        #  get full file object for all uids
+        file_objects = self.c_plugin._get_objects_from_uids(included_file_uids)
+        assert all(isinstance(fo, FileObject) for fo in file_objects), 'All returned objects should be FileObjects'
+
+        # only keep config files - filter out non config files based on extension and file type
+        config_files = self.c_plugin._filter_config_files(file_objects)
+        assert all(isinstance(fo, FileObject) for fo in config_files), 'All returned objects should be FileObjects'
+
+        # get uid list for filtered config files
+        config_file_uids = self.c_plugin._get_uid_list_from_file_objects(config_files)
+        assert is_list_of_uids(config_file_uids), 'Config file uids should be a list of uids'
+
+        # transform to list of vfp + uids that share that vfp
+        # shared_vfps = self.c_plugin._get_shared_vfps(config_file_uids_with_vfps)
+        # assert isinstance(shared_vfps, dict), 'Shared vfps should be a dict'
+
+        # parse configs
+        parsed_config_parameters = self.c_plugin._parse_config_from_fo_list(config_files)
+        assert isinstance(parsed_config_parameters, dict), 'Parsed config parameters should be a dict'
+    
+    def test_compare_function(self):
+        result = self.c_plugin.compare_function([self.fw_one, self.fw_two, self.fw_three], {})
+        # result == dict[str, dict]
+        assert isinstance(result, dict), 'Result should be a dictionary'
+        assert all(isinstance(value, dict) for value in result.values()), 'Each value in result should be a dictionary'
+        
+        result = self.c_plugin.compare_function([FW_FOUR, FW_FIVE], {})
+        assert isinstance(result, dict), 'Result should be a dictionary'
+    
+    def test_identification(self):
+        # Create file objects with different extensions and file type analysis results to test config type determination
+        fo_dualkey = create_test_file_object(bin_path='firmware1/config/example.config')
+        fo_dualkey.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.config')
+        fo_dualkey.processed_analysis['file_type']['result'] = {'mime': 'text/plain', 'full': 'ASCII text with dual key value pairs'}
+        
+        fo_dualkey_b = create_test_file_object(bin_path='firmware1/config/example.b.config')
+        fo_dualkey_b.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.b.config')
+        fo_dualkey_b.processed_analysis['file_type']['result'] = {'mime': 'text/plain', 'full': 'ASCII text with dual key value pairs'}
+        
+        fo_dualkey_c = create_test_file_object(bin_path='firmware1/config/examplecdualkey')
+        fo_dualkey_c.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/examplecdualkey')
+        fo_dualkey_c.processed_analysis['file_type']['result'] = {'mime': 'text/plain', 'full': 'ASCII text with dual key value pairs'}
+        
+        fo_xml = create_test_file_object(bin_path='firmware1/config/example.xml')
+        fo_xml.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.xml')
+        fo_xml.processed_analysis['file_type']['result'] = {'mime': 'text/plain', 'full': 'ASCII text with XML markup'}
+        
+        fo_toml = create_test_file_object(bin_path='firmware1/config/example.toml')
+        fo_toml.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.toml')
+        fo_toml.processed_analysis['file_type']['result'] = {'mime': 'text/plain', 'full': 'ASCII text'}
+        
+        fo_general_config = create_test_file_object(bin_path='firmware1/config/example')
+        fo_general_config.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example')
+        fo_general_config.processed_analysis['file_type']['result'] = {'mime': 'text/plain', 'full': 'ASCII text'}
+        
+        fo_json = create_test_file_object(bin_path='firmware1/config/example.json')
+        fo_json.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.json')
+        fo_json.processed_analysis['file_type']['result'] = {'mime': 'application/json', 'full': 'JSON'}
+        
+        fo_yaml = create_test_file_object(bin_path='firmware1/config/example.yaml')
+        fo_yaml.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.yaml')
+        fo_yaml.processed_analysis['file_type']['result'] = {'mime': 'text/plain', 'full': 'YAML'}
+        
+        fo_csv = create_test_file_object(bin_path='firmware1/config/example.csv')
+        fo_csv.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.csv')
+        fo_csv.processed_analysis['file_type']['result'] = {'mime': 'text/csv', 'full': 'CSV'}
+        
+        # false positives
+        fo_js = create_test_file_object(bin_path='firmware1/config/example.js')
+        fo_js.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.js')
+        fo_js.processed_analysis['file_type']['result'] = {'mime': 'application/javascript', 'full': 'ASCII text'}
+        
+        fo_js_text_plain = create_test_file_object(bin_path='firmware1/config/example.js')
+        fo_js_text_plain.binary = get_binary_from_file(f'{TEST_DATA_DIR}/firmware1/config/example.js')
+        fo_js_text_plain.processed_analysis['file_type']['result'] = {'mime': 'text/plain', 'full': 'js library'}
+        
+        # is config file?
+        assert self.c_plugin._is_config_file(fo_dualkey) == True, 'Should identify .config file as config file'
+        assert self.c_plugin._is_config_file(fo_dualkey_b) == True, 'Should identify .b.config file as config file'
+        assert self.c_plugin._is_config_file(fo_xml) == True, 'Should identify .xml file as config file'
+        assert self.c_plugin._is_config_file(fo_toml) == True, 'Should identify .toml file as config file'
+        assert self.c_plugin._is_config_file(fo_general_config) == True, 'Should identify file with no extension as config file'
+        assert self.c_plugin._is_config_file(fo_json) == True, 'Should identify application/json file as config file'
+        assert self.c_plugin._is_config_file(fo_yaml) == True, 'Should identify application/x-yaml file as config file'
+        assert self.c_plugin._is_config_file(fo_csv) == True, 'Should identify text/csv file as config file'
+        assert self.c_plugin._is_config_file(fo_dualkey_c) == True, 'Should identify file with dualkey content as config file'
+        
+        assert self.c_plugin._is_config_file(fo_js) == False, 'Should not identify application/javascript file as config file' 
+        assert self.c_plugin._is_config_file(fo_js_text_plain) == False, 'Should not identify text/plain js library file as config file'
+        
+    
+        # what type?
+        assert self.c_plugin._determine_config_type(fo_dualkey) == 'dualkey', 'Config type should be dualkey for .config files with dual key content'
+        assert self.c_plugin._determine_config_type(fo_dualkey_b) == 'dualkey', 'Config type should be dualkey for .b.config files with dual key content'
+        assert self.c_plugin._determine_config_type(fo_dualkey_c) == 'dualkey', 'Config type should be dualkey for files with dual key content even without config extension'
+        assert self.c_plugin._determine_config_type(fo_xml) == 'xml', 'Config type should be xml for .xml files'
+        assert self.c_plugin._determine_config_type(fo_toml) == 'toml', 'Config type should be toml for .toml files'
+        assert self.c_plugin._determine_config_type(fo_general_config) == None, 'Config type should be None for unknown file types'
+        assert self.c_plugin._determine_config_type(fo_json) == 'json', 'Config type should be json for application/json files'
+        assert self.c_plugin._determine_config_type(fo_yaml) == 'yaml', 'Config type should be yaml for application/x-yaml files'
+        assert self.c_plugin._determine_config_type(fo_csv) == 'csv', 'Config type should be csv for text/csv files'
+    
+    def test_parse_config_from_binary_empty_file(self):
+        # Empty file should return empty dict
+        example_content = b""
+        expected_output = {}
+        output = self.c_plugin._parse_config_from_binary(example_content)
+        assert output == expected_output, f'Unexpected output for empty file'
+        
+    def test_get_included_uids(self):
+        fo_list = [self.fw_one, self.fw_two, self.fw_three]
+        included_uids = self.c_plugin._get_included_uids(fo_list)
+        expected_uids = set(self.fw_one.list_of_all_included_files + self.fw_two.list_of_all_included_files + self.fw_three.list_of_all_included_files)
+        assert set(included_uids) == expected_uids, 'Included UIDs do not match expected UIDs'
+        
+        # empty set
+        included_uids = self.c_plugin._get_included_uids([])
+        assert included_uids == [], 'Included UIDs should be empty list for empty input'
+        
+    def test_parse_config_from_binary(self):
+        # Example config content
+        example_content_dual_key = b"""
+        type key value
+        
+        ; network config
+        network port 8080
+        network bind 0.0.0.0
+        network protocol tcp
+        
+        ; database config
+        database host localhost
+        database port 3306
+        """
+        expected_output = {
+            'type key': 'value',
+            'network port': '8080',
+            'network bind': '0.0.0.0',
+            'network protocol': 'tcp',
+            'database host': 'localhost',
+            'database port': '3306'
+        }
+        output = self.c_plugin._parse_config_from_binary(example_content_dual_key, filetype='dualkey')
+        assert output == expected_output, f'Unexpected output'
+    
+    def test_parse_helper_dualkey(self):
+        # Example dualkey config content
+        example_content_spaces = b"""
+        type key value
+        
+        ; network config
+        network port 8080
+        network bind 0.0.0.0
+        network protocol tcp
+        
+        ; database config
+        database host localhost
+        database port 3306
+        """
+        expected_output_spaces = {
+            'type key': 'value',
+            'network port': '8080',
+            'network bind': '0.0.0.0',
+            'network protocol': 'tcp',
+            'database host': 'localhost',
+            'database port': '3306'
+        }
+        example_content_equals = b"""
+        type key value
+        
+        ; network config
+        network port=8080
+        network bind=0.0.0.0
+        network protocol=tcp
+        
+        ; database config
+        database host=localhost
+        database port=3306
+        database description=main database
+        """
+        expected_output_equals = {
+            'type key': 'value',
+            'network port': '8080',
+            'network bind': '0.0.0.0',
+            'network protocol': 'tcp',
+            'database host': 'localhost',
+            'database port': '3306',
+            'database description': 'main database'
+        }
+        output = self.c_plugin._parse_helper_dualkey(example_content_spaces)
+        assert output == expected_output_spaces, f'Unexpected output'
+        output = self.c_plugin._parse_helper_dualkey(example_content_equals)
+        assert output == expected_output_equals, f'Unexpected output'
+        
+    def test_parse_helper_default(self):
+        # Example default config content
+        example_content = b"""
+        # This is a comment
+        port=8080
+        bind=0.0.0.0
+        protocol=tcp
+        """
+        expected_output = {
+            'port': '8080',
+            'bind': '0.0.0.0',
+            'protocol': 'tcp'
+        }
+        
+        output = self.c_plugin._parse_helper_default(example_content)
+        assert output == expected_output, f'Unexpected output'
+
+    def test_parse_helper_toml(self):
+        # Example toml config content
+        example_content = b"""
+        [network]
+        port = 8080
+        bind = "0.0.0.0"
+        
+        [database]
+        host = "localhost"
+        port = 3306
+        """
+        expected_output = {
+            'network port': '8080',
+            'network bind': '0.0.0.0',
+            'database host': 'localhost',
+            'database port': '3306'
+        }
+        output = self.c_plugin._parse_helper_toml(example_content)
+        assert output == expected_output, f'Unexpected output'
+        
+        # rugged parsing - missing equals signs
+        example_content_rugged = b"""
+        [network]
+        ports 8080 8081 8082
+        bind 0.0.0.0
+        """
+        expected_output_rugged = {
+            'network ports': '8080 8081 8082',
+            'network bind': '0.0.0.0'
+        }
+        output = self.c_plugin._parse_helper_toml_rugged(example_content_rugged)
+        assert output == expected_output_rugged, f'Unexpected output'
+        
+    def test_parse_helper_xml(self):
+        # Example xml config content
+        example_content = b"""
+        <config>
+            <network>
+                <port>8080</port>
+                <bind>0.0.0.0</bind>
+            </network>
+            <database>
+                <host>localhost</host>
+                <port>3306</port>
+            </database>
+        </config>
+        """
+        expected_output = {
+            'config network port': '8080',
+            'config network bind': '0.0.0.0',
+            'config database host': 'localhost',
+            'config database port': '3306'
+        }
+        output = self.c_plugin._parse_helper_xml(example_content)
+        assert output == expected_output, f'Unexpected output'
+        
+        # Test rugged xml parsing
+        output = self.c_plugin._parse_helper_xml_rugged(example_content)
+        assert output == expected_output, f'Unexpected output'
+    
+    def test_parse_helper_json(self):
+        # Example json config content
+        example_content = b"""
+        {
+            "network": {
+                "port": 8080,
+                "bind": "0.0.0.0"
+            },
+            "database": {
+                "host": "localhost",
+                "port": 3306
+            }
+        }
+        """
+        expected_output = {
+            'network port': '8080',
+            'network bind': '0.0.0.0',
+            'database host': 'localhost',
+            'database port': '3306'
+        }
+        output = self.c_plugin._parse_helper_json(example_content)
+        assert output == expected_output, f'Unexpected output'
+
+    def test_parse_helper_yaml(self):
+        # Example yaml config content
+        example_content = b"""
+        network:
+          port: 8080
+          bind: 0.0.0.0
+        database:
+            host: localhost
+            port: 3306
+        """
+        expected_output = {
+            'network port': '8080',
+            'network bind': '0.0.0.0',
+            'database host': 'localhost',
+            'database port': '3306'
+        }
+        output = self.c_plugin._parse_helper_yaml(example_content)
+        assert output == expected_output, f'Unexpected output'
+
+    def test_parse_helper_csv(self):
+        # Example csv config content
+        example_content = b"""
+        port,bind,protocol,key_then_value_format
+        8080,0.0.0.0,tcp,true
+        """
+        expected_output = {
+            'port': '8080',
+            'bind': '0.0.0.0',
+            'protocol': 'tcp',
+            'key_then_value_format': 'true'
+        }
+        output = self.c_plugin._parse_helper_csv(example_content)
+        assert output == expected_output, f'Unexpected output'
+        
+        # test key,key,value parsing
+        example_content_key_key_value = b"""
+        key,key,value
+        network,port,8080
+        network,bind,0.0.0.0
+        network,protocol,tcp
+        """
+        expected_output_key_key_value = {
+            'key key': 'value',
+            'network port': '8080',
+            'network bind': '0.0.0.0',
+            'network protocol': 'tcp'
+        }
+        output = self.c_plugin._parse_helper_csv(example_content_key_key_value)
+        assert output == expected_output_key_key_value, f'Unexpected output'
+        
+        # broken csv with keys not matching count of values
+        example_content_broken = b"""
+        port,bind,protocol
+        8080,0.0.0.0
+        """
+        expected_output_broken = {
+            'Error': 'Unable to determine CSV format: number of commas do not match between first and second line'
+        }
+        output = self.c_plugin._parse_helper_csv(example_content_broken)
+        assert output == expected_output_broken, f'Unexpected output'

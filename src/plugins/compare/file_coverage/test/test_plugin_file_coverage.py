@@ -1,7 +1,7 @@
 import pytest
 
-from plugins.compare.file_coverage.code.file_coverage import ComparePlugin, generate_similarity_sets
 from test.common_helper import CommonDatabaseMock
+from plugins.compare.file_coverage.code.file_coverage import ComparePlugin, generate_similarity_sets
 from test.unit.compare.compare_plugin_test_class import ComparePluginTest
 
 
@@ -21,17 +21,12 @@ class DbMock:
 
 
 class TestComparePluginFileCoverage(ComparePluginTest):
-    # This name must be changed according to the name of plug-in to test
     PLUGIN_NAME = 'File_Coverage'
     PLUGIN_CLASS = ComparePlugin
 
     def setup_plugin(self):
-        """
-        This function must be overwritten by the test instance.
-        In most cases it is sufficient to copy this function.
-        """
         return ComparePlugin(db_interface=DbMock(), view_updater=CommonDatabaseMock())
-
+    
     def test_get_intersection_of_files(self):
         self.fw_one.list_of_all_included_files.append('foo')
         self.fw_two.list_of_all_included_files.append('foo')

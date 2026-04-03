@@ -176,6 +176,7 @@ class FilterClass:
                 'link_cwe': flt.replace_cwe_with_link,
                 'list_group': flt.list_group,
                 'list_group_collapse': flt.list_group_collapse,
+                'list_group_collapse_unsorted': flt.list_group_collapse_unsorted,
                 'list_to_line_break_string': flt.list_to_line_break_string,
                 'list_to_line_break_string_no_sort': flt.list_to_line_break_string_no_sort,
                 'md5_hash': get_md5,
